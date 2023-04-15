@@ -96,11 +96,109 @@ func someUsefulThings() {
 	_ = fmt.Sprintf("%s_%d", "file", 1)
 }
 
+// Source: https://www.bogotobogo.com/GoLang/GoLang_Binary_Search_Tree.php
+type Tree struct {
+	Root *Node
+}
+type Node struct {
+	Key   string
+	Left  *Node
+	Right *Node
+}
+
+// Tree
+func (t *Tree) insert(data string) {
+	if t.Root == nil {
+		t.Root = &Node{Key: data}
+	} else {
+		t.Root.insert(data)
+	}
+}
+
+// Node
+func (n *Node) insert(data string) {
+	if data <= n.Key {
+		if n.Left == nil {
+			n.Left = &Node{Key: data}
+		} else {
+			n.Left.insert(data)
+		}
+	} else {
+		if n.Right == nil {
+			n.Right = &Node{Key: data}
+		} else {
+			n.Right.insert(data)
+		}
+	}
+}
+
+// End Source: https://www.bogotobogo.com/GoLang/GoLang_Binary_Search_Tree.php
+
+// Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
+
+type LL_Node struct {
+	Prev *LL_Node
+	Next *LL_Node
+	Key  []byte
+}
+
+type List struct {
+	Head *LL_Node
+	Tail *LL_Node
+}
+
+func (L *List) Insert(Key []byte) {
+	list := &LL_Node{
+		Next: L.Head,
+		Key:  Key,
+	}
+	if L.Head != nil {
+		L.Head.Prev = list
+	}
+	L.Head = list
+
+	l := L.Head
+	for l.Next != nil {
+		l = l.Next
+	}
+	L.Tail = l
+}
+
+// End Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
+
+// Type File contents struct
+
+type File_contents struct {
+	Contents List
+}
+
+// Type File struct
+
+type File_struct struct {
+	File_UUID     uuid.UUID
+	File_contents File_contents
+	File_tree     Tree
+}
+
+// Type Invitation struct
+
+type Invitation struct {
+	Decrypt_file_key_RSA userlib.PKEDecKey
+	Filename             string
+}
+
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username string
+	Username             string
+	Root_key             []byte
+	User_UUID            uuid.UUID
+	Decryption_key_RSA   userlib.PKEDecKey
+	Verification_key_MAC []byte
+	InvitationMap        map[string]Invitation
+	DecryptionMap        map[string]userlib.PKEDecKey
+	VerificationMap      map[string][]byte
 
 	// You can add other attributes here if you want! But note that in order for attributes to
 	// be included when this struct is serialized to/from JSON, they must be capitalized.
@@ -115,6 +213,21 @@ type User struct {
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
+	var password_bytes, err1 = json.Marshal(password)
+	var salt_bytes, err2 = json.Marshal(1) // salt = 1 for determinism
+	if err1 != nil || err2 != nil {
+		return
+	}
+	userdata.Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 32)
+	var err3 error
+	userdata.User_UUID, err3 = uuid.FromBytes(userdata.Root_key)
+	if err3 != nil {
+		return
+	}
+	var Encryption_key_RSA userlib.PKEEncKey // to be in KeyStore
+	var err4 error
+	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
+
 	return &userdata, nil
 }
 
