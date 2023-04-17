@@ -245,13 +245,34 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	var userdata_ciphertext = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes((16)), userdata_plaintext)
-	userlib.DatastoreSet(userdata.User_UUID, userdata_ciphertext)
+	var userdata_MAC, err7 = userlib.HMACEval(userdata.Verification_key_MAC, userdata_ciphertext)
+	if err7 != nil {
+		return
+	}
+	user_array := []interface{}{userdata_ciphertext, userdata_MAC}
+	var user_array_store, err8 = json.Marshal(user_array)
+	if err8 != nil {
+		return
+	}
+	userlib.DatastoreSet(userdata.User_UUID, user_array_store)
 	return &userdata, nil
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdataptr = &userdata
+	var password_bytes, err1 = json.Marshal(password)
+	var salt_bytes, err2 = json.Marshal(1)
+	if err1 != nil || err2 != nil {
+		return
+	}
+	Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 32)
+	User_UUID, err3 = uuid.FromBytes(Root_key)
+	User, ok = userlib.DatastoreGet(User_UUID)
+	if ok == true {
+		HMACEval()
+	}
+
 	return userdataptr, nil
 }
 
