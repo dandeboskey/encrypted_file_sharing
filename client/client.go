@@ -169,13 +169,13 @@ func (L *List) Insert(Key []byte) {
 // Type File contents struct
 
 type File_contents struct {
-	Contents List
+	Contents  List
+	Num_bytes int
 }
 
 // Type File struct
 
 type File_struct struct {
-	File_UUID     uuid.UUID
 	File_contents File_contents
 	File_tree     Tree
 }
@@ -184,7 +184,7 @@ type File_struct struct {
 
 type Invitation struct {
 	Decrypt_file_key_RSA userlib.PKEDecKey
-	Filename             string
+	File_UUID            uuid.UUID
 }
 
 // This is the type definition for the User struct.
@@ -199,14 +199,14 @@ type User struct {
 	InvitationMap        map[string]Invitation
 	DecryptionMap        map[string]userlib.PKEDecKey
 	VerificationMap      map[string][]byte
-
-	// You can add other attributes here if you want! But note that in order for attributes to
-	// be included when this struct is serialized to/from JSON, they must be capitalized.
-	// On the flipside, if you have an attribute that you want to be able to access from
-	// this struct's methods, but you DON'T want that value to be included in the serialized value
-	// of this struct that's stored in datastore, then you can use a "private" variable (e.g. one that
-	// begins with a lowercase letter).
 }
+
+// You can add other attributes here if you want! But note that in order for attributes to
+// be included when this struct is serialized to/from JSON, they must be capitalized.
+// On the flipside, if you have an attribute that you want to be able to access from
+// this struct's methods, but you DON'T want that value to be included in the serialized value
+// of this struct that's stored in datastore, then you can use a "private" variable (e.g. one that
+// begins with a lowercase letter).
 
 // NOTE: The following methods have toy (insecure!) implementations.
 
