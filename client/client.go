@@ -266,11 +266,33 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if err1 != nil || err2 != nil {
 		return
 	}
-	Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 32)
+	var Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 32)
+	var err3 error
+	var User_UUID uuid.UUID
 	User_UUID, err3 = uuid.FromBytes(Root_key)
-	User, ok = userlib.DatastoreGet(User_UUID)
+	var User, ok = userlib.DatastoreGet(User_UUID)
+	if err3 != nil {
+		return
+	}
 	if ok == true {
-		HMACEval()
+		var dummyptr *[]interface{}
+		var dummy = json.Unmarshal(User, dummyptr)
+		var realdummy = *dummyptr
+		var err4 error
+		var salt []byte 
+		salt, err4 = json.Marshal(2)
+		if err4 != nil {
+			return
+		}
+		var key = userlib.Argon2Key(password_bytes, salt, 16)
+		var Verification_MAC, err5 = userlib.HMACEval(key, realdummy[0])
+		if err5 != nil {
+			return
+		}
+		if !HMACEqual(Verification_MAC, dummy[1]) {
+			return
+		}
+		SymDec(Root_key, dummy[0])
 	}
 
 	return userdataptr, nil
