@@ -214,7 +214,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
 	var password_bytes, err1 = json.Marshal(password)
-	var salt_bytes, err2 = json.Marshal(1) // salt = 1 for determinism
+	var salt_bytes, err2 = json.Marshal(userlib.RandomBytes(8888888)) // salt = 1 for determinism
 	if err1 != nil || err2 != nil {
 		return
 	}
@@ -224,9 +224,21 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err3 != nil {
 		return
 	}
-	var Encryption_key_RSA userlib.PKEEncKey // to be in KeyStore
+	var Encryption_key_RSA userlib.PKEEncKey //
+	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
 	var err4 error
+	if err4 != nil {
+		return
+	}
 	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
+	var deterministic_bytes, err5 = json.Marshal(1)
+	if err5 != nil {
+		return
+	}
+	userdata.Verification_key_MAC = userlib.Argon2Key(password_bytes, deterministic_bytes, 32)
+	userdata.InvitationMap = make(map[string]Invitation)
+	userdata.DecryptionMap = make(map[string]userlib.PKEDecKey)
+	userdata.VerificationMap = make(map[string][]byte)
 
 	return &userdata, nil
 }
