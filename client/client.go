@@ -214,11 +214,11 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
 	var password_bytes, err1 = json.Marshal(password)
-	var salt_bytes, err2 = json.Marshal(userlib.RandomBytes(8888888)) // salt = 1 for determinism
+	var salt_bytes, err2 = json.Marshal(1) // salt = 1 for determinism
 	if err1 != nil || err2 != nil {
 		return
 	}
-	userdata.Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 32)
+	userdata.Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 16)
 	var err3 error
 	userdata.User_UUID, err3 = uuid.FromBytes(userdata.Root_key)
 	if err3 != nil {
@@ -231,15 +231,21 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
-	var deterministic_bytes, err5 = json.Marshal(1)
+	var deterministic_bytes, err5 = json.Marshal(2) // salt = 2 for determinism
 	if err5 != nil {
 		return
 	}
-	userdata.Verification_key_MAC = userlib.Argon2Key(password_bytes, deterministic_bytes, 32)
+	userdata.Verification_key_MAC = userlib.Argon2Key(password_bytes, deterministic_bytes, 16)
 	userdata.InvitationMap = make(map[string]Invitation)
 	userdata.DecryptionMap = make(map[string]userlib.PKEDecKey)
 	userdata.VerificationMap = make(map[string][]byte)
 
+	var userdata_plaintext, err6 = json.Marshal(userdata)
+	if err6 != nil {
+		return
+	}
+	var userdata_ciphertext = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes((16)), userdata_plaintext)
+	userlib.DatastoreSet(userdata.User_UUID, userdata_ciphertext)
 	return &userdata, nil
 }
 
