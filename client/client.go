@@ -191,14 +191,14 @@ type Invitation struct {
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username             string
-	Root_key             []byte
-	User_UUID            uuid.UUID
-	Decryption_key_RSA   userlib.PKEDecKey
-	Verification_key_MAC []byte
-	InvitationMap        map[string]Invitation
-	DecryptionMap        map[string]userlib.PKEDecKey
-	VerificationMap      map[string][]byte
+	Username           string                       // username
+	Root_key           []byte                       // symmetric key used to encrpt and decrypt user struct
+	User_UUID          uuid.UUID                    // user's UUID
+	Decryption_key_RSA userlib.PKEDecKey            // used for decrypting invitations directing towards the user
+	DS_sign_key        userlib.PrivateKeyType       // used to sign user struct
+	InvitationMap      map[string]Invitation        // hash(filename) -> invitation struct
+	DecryptionMap      map[string]userlib.PKEDecKey // hash(filename) -> file decryption key
+	VerificationMap    map[string][]byte            // hash(filename) -> MAC verification key
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -224,18 +224,21 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err3 != nil {
 		return
 	}
-	var Encryption_key_RSA userlib.PKEEncKey //
+	var Encryption_key_RSA userlib.PKEEncKey
 	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
 	var err4 error
 	if err4 != nil {
 		return
 	}
 	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
-	var deterministic_bytes, err5 = json.Marshal(2) // salt = 2 for determinism
+	var err5 error
+	var DS_verify_key userlib.PublicKeyType
+	userdata.DS_sign_key, DS_verify_key, err5 = userlib.DSKeyGen()
 	if err5 != nil {
 		return
 	}
-	userdata.Verification_key_MAC = userlib.Argon2Key(password_bytes, deterministic_bytes, 16)
+	userlib.KeystoreSet(username+"_DS", DS_verify_key)
+
 	userdata.InvitationMap = make(map[string]Invitation)
 	userdata.DecryptionMap = make(map[string]userlib.PKEDecKey)
 	userdata.VerificationMap = make(map[string][]byte)
@@ -245,11 +248,11 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	var userdata_ciphertext = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes((16)), userdata_plaintext)
-	var userdata_MAC, err7 = userlib.HMACEval(userdata.Verification_key_MAC, userdata_ciphertext)
+	var userdata_signature, err7 = userlib.DSSign(userdata.DS_sign_key, userdata_ciphertext)
 	if err7 != nil {
 		return
 	}
-	user_array := []interface{}{userdata_ciphertext, userdata_MAC}
+	user_array := []interface{}{userdata_ciphertext, userdata_signature}
 	var user_array_store, err8 = json.Marshal(user_array)
 	if err8 != nil {
 		return
@@ -279,7 +282,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		var dummy = json.Unmarshal(User, dummyptr)
 		var realdummy = *dummyptr
 		var err4 error
-		var salt []byte 
+		var salt []byte
 		salt, err4 = json.Marshal(2)
 		if err4 != nil {
 			return
