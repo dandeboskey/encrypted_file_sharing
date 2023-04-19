@@ -269,7 +269,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if err1 != nil || err2 != nil {
 		return
 	}
-	var Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 32)
+	var Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 16)
 	var err3 error
 	var User_UUID uuid.UUID
 	User_UUID, err3 = uuid.FromBytes(Root_key)
@@ -279,23 +279,28 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 	if ok == true {
 		var dummyptr *[]interface{}
-		var dummy = json.Unmarshal(User, dummyptr)
-		var realdummy = *dummyptr
-		var err4 error
-		var salt []byte
-		salt, err4 = json.Marshal(2)
-		if err4 != nil {
+        json.Unmarshal(User, dummyptr)
+        var realdummy = *dummyptr
+		var key, ok = userlib.KeystoreGet(username+"_DS")
+		if ok == true {
+			var verification_ds = realdummy[1].([]byte)
+			var cipher = realdummy[0].([]byte)
+			var err4 error
+			err4 = userlib.DSVerify(key, cipher, verification_ds)
+			if err4 != nil {
+				return
+			}
+			// everything is verified
+			var plaintext = userlib.SymDec(Root_key, cipher)
+			var err5 error
+			err5 = json.Unmarshal(plaintext, userdataptr)
+			if err5 != nil {
+				return
+			}
+			return userdataptr, err5
+		} else {
 			return
 		}
-		var key = userlib.Argon2Key(password_bytes, salt, 16)
-		var Verification_MAC, err5 = userlib.HMACEval(key, realdummy[0])
-		if err5 != nil {
-			return
-		}
-		if !HMACEqual(Verification_MAC, dummy[1]) {
-			return
-		}
-		SymDec(Root_key, dummy[0])
 	}
 
 	return userdataptr, nil
