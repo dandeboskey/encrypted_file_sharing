@@ -179,7 +179,7 @@ type File_struct struct {
 type Invitation struct {
 	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file_struct
 	File_UUID            uuid.UUID         // randomized file ID used to obtain file struct from DataStore
-	owner                bool              // true if user created the file
+	Owner                bool              // true if user created the file
 }
 
 // This is the type definition for the User struct.
@@ -238,7 +238,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	// put digital signature key in keystore
-	userlib.KeystoreSet(username+"_DS", DS_verify_key)
+	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_DS"))), DS_verify_key)
 	// create all of our maps
 	userdata.InvitationMap = make(map[string]uuid.UUID)
 	userdata.FileSignMap = make(map[string]userlib.PrivateKeyType)
@@ -346,7 +346,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	userdata.FileSignMap[string(file_hash)] = DS_signKey
 	var file_uuid uuid.UUID
 	file_uuid = uuid.New()
-	Invite := Invitation{Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, owner: true}
+	Invite := Invitation{Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, Owner: true}
 	var invite_uuid uuid.UUID
 	invite_uuid = uuid.New()
 	userdata.InvitationMap[string(file_hash)] = invite_uuid
@@ -378,10 +378,12 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var encKey userlib.PKEEncKey
 	var ok bool
 	var hash []byte
-	hash, err = json.Marshal(userdata.Username)
+	var userbytes []byte
+	userbytes, err = json.Marshal(userdata.Username)
 	if err != nil {
 		return
 	}
+	hash = userlib.Hash(userbytes)
 	encKey, ok = userlib.KeystoreGet(string(hash))
 	if !ok {
 		return
@@ -412,6 +414,84 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
+	// get array from datastore, verify DS, unencrpt inv -> get invitation
+	var file_hash string
+	file_hash = string(userlib.Hash([]byte(filename)))
+	var val, err = userdata.InvitationMap[file_hash]
+	if err != true {
+		return nil
+	}
+	var inv_ciphertext_DS, ok = userlib.DatastoreGet(val)
+	if ok != true {
+		return nil
+	}
+	var dummyptr *[]interface{}
+	json.Unmarshal(inv_ciphertext_DS, dummyptr)
+	var realdummy = *dummyptr
+	var inv_DS_key userlib.PublicKeyType
+
+	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
+	if ok != true {
+		return nil
+	}
+	var verification_ds = realdummy[1].([]byte)
+	var ciphertext = realdummy[0].([]byte)
+	var err2 error
+	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
+	if err2 != nil {
+		return err2
+	}
+	var plaintext []byte
+	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
+	if err2 != nil {
+		return err2
+	}
+	var inv Invitation
+	var invptr = &inv
+	err2 = json.Unmarshal(plaintext, invptr)
+	if err2 != nil {
+		return err2
+	}
+
+	// check owner is true
+	if inv.Owner != true {
+		return nil
+	}
+
+	// get filestruct from Datastore
+	var file_uuid = inv.File_UUID
+	var file_dec_key = inv.Decrypt_file_key_RSA
+	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
+	if ok2 != true {
+		return nil
+	}
+	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
+	if ok3 != true {
+		return nil
+	}
+	var dummyptr2 *[]interface{}
+	json.Unmarshal(encrypted_file_struct, dummyptr2)
+	var realdummy2 = *dummyptr2
+	var verification_ds2 = realdummy2[1].([]byte)
+	var ciphertext2 = realdummy2[0].([]byte)
+	err2 = userlib.DSVerify(file_verify_key, ciphertext2, verification_ds2)
+	if err2 != nil {
+		return err2
+	}
+	var plaintext2 []byte
+	plaintext2, err2 = userlib.PKEDec(file_dec_key, ciphertext2)
+	if err2 != nil {
+		return err2
+	}
+	var file_struct File_struct
+	var file_struct_ptr = &file_struct
+	json.Unmarshal(plaintext2, file_struct_ptr)
+
+	// get file contents
+	var file_list = file_struct.Contents
+
+	// append to contents.tail and update num_bytes
+
 	return nil
 }
 
