@@ -137,9 +137,9 @@ func (n *Node) insert(data string) {
 // Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
 
 type LL_Node struct {
-	Prev *LL_Node
-	Next *LL_Node
-	Contents  []byte
+	Prev     *LL_Node
+	Next     *LL_Node
+	Contents []byte
 }
 
 type List struct {
@@ -149,8 +149,8 @@ type List struct {
 
 func (L *List) Insert(Contents []byte) {
 	list := &LL_Node{
-		Next: L.Head,
-		Contents:  Contents,
+		Next:     L.Head,
+		Contents: Contents,
 	}
 	if L.Head != nil {
 		L.Head.Prev = list
@@ -178,28 +178,27 @@ type File_contents struct {
 type File_struct struct {
 	File_contents File_contents
 	File_tree     Tree
-	File_UUID	  uuid.UUID
+	File_UUID     uuid.UUID
 }
 
 // Type Invitation struct
 
 type Invitation struct {
-	Decrypt_file_key_RSA userlib.PKEDecKey
-	File_UUID            uuid.UUID
+	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file
+	File_UUID            uuid.UUID         // randomized file ID used to obtain file struct from DataStore
 }
 
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username           string                       // username
-	Root_key           []byte                       // symmetric key used to encrpt and decrypt user struct
-	User_UUID          uuid.UUID                    // user's UUID
-	Decryption_key_RSA userlib.PKEDecKey            // used for decrypting invitations directing towards the user
-	DS_sign_key        userlib.PrivateKeyType       // used to sign user struct
-	InvitationMap      map[string]Invitation        // hash(filename) -> invitation struct
-	DecryptionMap      map[uuid.UUID]userlib.PKEDecKey // hash(filename) -> file decryption key
-	SignMap    		   map[uuid.UUID]userlib.PrivateKeyType   // hash(filename) -> DS verification key
+	Username           string                            // username
+	Root_key           []byte                            // a deterministic symmetric key used to derive user.UUID, and decrypt/encrypt the user struct,
+	User_UUID          uuid.UUID                         // user's UUID, derived from root_key
+	Decryption_key_RSA userlib.PKEDecKey                 // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
+	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore.
+	InvitationMap      map[[]byte]Invitation             // hash(filename) -> invitation struct
+	SignMap            map[[]byte]userlib.PrivateKeyType // hash(filename) -> MAC verification key
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -226,12 +225,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	var Encryption_key_RSA userlib.PKEEncKey
-	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
 	var err4 error
 	if err4 != nil {
 		return
 	}
 	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
+	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
 	var err5 error
 	var DS_verify_key userlib.PublicKeyType
 	userdata.DS_sign_key, DS_verify_key, err5 = userlib.DSKeyGen()
@@ -283,9 +282,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 	if ok == true {
 		var dummyptr *[]interface{}
-        json.Unmarshal(User, dummyptr)
-        var realdummy = *dummyptr
-		var key, ok = userlib.KeystoreGet(username+"_DS")
+		json.Unmarshal(User, dummyptr)
+		var realdummy = *dummyptr
+		var key, ok = userlib.KeystoreGet(username + "_DS")
 		if ok == true {
 			var verification_ds = realdummy[1].([]byte)
 			var cipher = realdummy[0].([]byte)
@@ -324,21 +323,25 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	numBytes = len(contentBytes)
 	// throw content bytes into linkedlist node
 	// userlib.DatastoreSet(storageKey, contentBytes)
-	LLNode := LL_Node{Prev:nil, Next:nil, Contents:contentBytes}
-	FileList := List{Head:&LLNode, Tail:&LLNode}
-	FileContents := File_contents{Contents:FileList, Num_bytes:numBytes}
-	TreeNode := Node{Key:userdata.Username, Left:nil, Right:nil}
-	UserTree := Tree{Root:&TreeNode}
-	FileStruct := File_struct{File_contents:FileContents, File_tree:UserTree}
+	LLNode := LL_Node{Prev: nil, Next: nil, Contents: contentBytes}
+	FileList := List{Head: &LLNode, Tail: &LLNode}
+	FileContents := File_contents{Contents: FileList, Num_bytes: numBytes}
+	TreeNode := Node{Key: userdata.Username, Left: nil, Right: nil}
+	UserTree := Tree{Root: &TreeNode}
+	FileStruct := File_struct{File_contents: FileContents, File_tree: UserTree}
 	// generate two symmetric key pairs
 	// first keypair
 	var Encryption_key_RSA userlib.PKEEncKey
 	var Decryption_key_RSA userlib.PKEDecKey
 	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
 	userdata.DecryptionMap[storageKey] = Decryption_key_RSA
+<<<<<<< HEAD
 	var file_uuid string
 	file_uuid = userlib.Hash([]byte(filename + userdata.Username))
 	userlib.KeystoreSet(filename + "_rsa", Encryption_key_RSA)
+=======
+	userlib.KeystoreSet(filename+"_rsa", Encryption_key_RSA)
+>>>>>>> bff731b42f9d51dda37047b2df4b6b18dd8746c2
 	if err != nil {
 		return
 	}
@@ -349,7 +352,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return
 	}
-	userlib.KeystoreSet(filename + "_ds", DS_verifyKey)
+	userlib.KeystoreSet(filename+"_ds", DS_verifyKey)
 	userdata.SignMap[storageKey] = DS_signKey
 	// put public keys in keystore
 
