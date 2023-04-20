@@ -488,9 +488,17 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	json.Unmarshal(plaintext2, file_struct_ptr)
 
 	// get file contents
-	var file_list = file_struct.Contents
-
 	// append to contents.tail and update num_bytes
+	var file_list = file_struct.Contents
+	var tail_ptr = file_list.Tail
+	new_node := LL_Node{Prev: tail_ptr, Next: nil, Contents: content}
+	*tail_ptr.Next = new_node
+	file_list.Tail = &new_node
+	file_struct.Num_bytes += len(content)
+
+	// re-encrypt and re-sign file_struct
+
+	// return
 
 	return nil
 }
