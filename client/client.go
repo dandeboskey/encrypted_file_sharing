@@ -139,7 +139,7 @@ func (n *Node) insert(data string) {
 type LL_Node struct {
 	Prev *LL_Node
 	Next *LL_Node
-	Key  []byte
+	Contents  []byte
 }
 
 type List struct {
@@ -147,10 +147,10 @@ type List struct {
 	Tail *LL_Node
 }
 
-func (L *List) Insert(Key []byte) {
+func (L *List) Insert(Contents []byte) {
 	list := &LL_Node{
 		Next: L.Head,
-		Key:  Key,
+		Contents:  Contents,
 	}
 	if L.Head != nil {
 		L.Head.Prev = list
@@ -183,22 +183,21 @@ type File_struct struct {
 // Type Invitation struct
 
 type Invitation struct {
-	Decrypt_file_key_RSA userlib.PKEDecKey
-	File_UUID            uuid.UUID
+	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file
+	File_UUID            uuid.UUID         // randomized file ID used to obtain file struct from DataStore
 }
 
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username           string                       // username
-	Root_key           []byte                       // symmetric key used to encrpt and decrypt user struct
-	User_UUID          uuid.UUID                    // user's UUID
-	Decryption_key_RSA userlib.PKEDecKey            // used for decrypting invitations directing towards the user
-	DS_sign_key        userlib.PrivateKeyType       // used to sign user struct
-	InvitationMap      map[string]Invitation        // hash(filename) -> invitation struct
-	DecryptionMap      map[string]userlib.PKEDecKey // hash(filename) -> file decryption key
-	VerificationMap    map[string][]byte            // hash(filename) -> MAC verification key
+	Username           string                            // username
+	Root_key           []byte                            // a deterministic symmetric key used to derive user.UUID, and decrypt/encrypt the user struct,
+	User_UUID          uuid.UUID                         // user's UUID, derived from root_key
+	Decryption_key_RSA userlib.PKEDecKey                 // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
+	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore.
+	InvitationMap      map[[]byte]Invitation             // hash(filename) -> invitation struct
+	SignMap            map[[]byte]userlib.PrivateKeyType // hash(filename) -> MAC verification key
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -225,12 +224,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	var Encryption_key_RSA userlib.PKEEncKey
-	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
 	var err4 error
 	if err4 != nil {
 		return
 	}
 	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
+	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
 	var err5 error
 	var DS_verify_key userlib.PublicKeyType
 	userdata.DS_sign_key, DS_verify_key, err5 = userlib.DSKeyGen()
@@ -239,9 +238,8 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	userlib.KeystoreSet(username+"_DS", DS_verify_key)
 
-	userdata.InvitationMap = make(map[string]Invitation)
-	userdata.DecryptionMap = make(map[string]userlib.PKEDecKey)
-	userdata.VerificationMap = make(map[string][]byte)
+	userdata.InvitationMap = make(map[[]byte]]Invitation)
+=userdata.SignMap = make(map[[]byte]]userlib.PrivateKeyType)
 
 	var userdata_plaintext, err6 = json.Marshal(userdata)
 	if err6 != nil {
@@ -279,9 +277,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 	if ok == true {
 		var dummyptr *[]interface{}
-        json.Unmarshal(User, dummyptr)
-        var realdummy = *dummyptr
-		var key, ok = userlib.KeystoreGet(username+"_DS")
+		json.Unmarshal(User, dummyptr)
+		var realdummy = *dummyptr
+		var key, ok = userlib.KeystoreGet(username + "_DS")
 		if ok == true {
 			var verification_ds = realdummy[1].([]byte)
 			var cipher = realdummy[0].([]byte)
