@@ -171,6 +171,7 @@ func (L *List) Insert(Contents []byte) {
 type File_contents struct {
 	Contents  List
 	Num_bytes int
+	contents_UUID uuid.UUID
 }
 
 // Type File struct
@@ -197,8 +198,9 @@ type User struct {
 	User_UUID          uuid.UUID                         // user's UUID, derived from root_key
 	Decryption_key_RSA userlib.PKEDecKey                 // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
 	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore.
-	InvitationMap      map[[]byte]Invitation             // hash(filename) -> invitation struct
-	SignMap            map[[]byte]userlib.PrivateKeyType // hash(filename) -> MAC verification key
+	InvitationMap      map[string]uuid.UUID             // hash(filename) -> invitation struct
+	SignMap            map[string]userlib.PrivateKeyType // hash(filename) -> MAC verification key
+	FileEncryptionMap  map[string]userlib.PKEEncKey
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -230,7 +232,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
-	userlib.KeystoreSet(userdata.Username, Encryption_key_RSA)
+	var hash []byte
+	hash, err = json.Marshal(userdata.Username)
+	if err != nil {
+		return
+	}
+	userlib.KeystoreSet(string(userlib.Hash(hash)), Encryption_key_RSA)
 	var err5 error
 	var DS_verify_key userlib.PublicKeyType
 	userdata.DS_sign_key, DS_verify_key, err5 = userlib.DSKeyGen()
@@ -240,9 +247,8 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// put digital signature key in keystore
 	userlib.KeystoreSet(username+"_DS", DS_verify_key)
 	// create all of our maps
-	userdata.InvitationMap = make(map[string]Invitation)
-	userdata.DecryptionMap = make(map[uuid.UUID]userlib.PKEDecKey)
-	userdata.SignMap = make(map[uuid.UUID]userlib.PrivateKeyType)
+	userdata.InvitationMap = make(map[string]uuid.UUID)
+	userdata.SignMap = make(map[string]userlib.PrivateKeyType)
 	// get plaintext in bytes
 	var userdata_plaintext, err6 = json.Marshal(userdata)
 	if err6 != nil {
@@ -322,26 +328,26 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var numBytes int
 	numBytes = len(contentBytes)
 	// throw content bytes into linkedlist node
-	// userlib.DatastoreSet(storageKey, contentBytes)
+	userlib.DatastoreSet(storageKey, contentBytes)
 	LLNode := LL_Node{Prev: nil, Next: nil, Contents: contentBytes}
 	FileList := List{Head: &LLNode, Tail: &LLNode}
-	FileContents := File_contents{Contents: FileList, Num_bytes: numBytes}
+	var content_uuid uuid.UUID
+	content_uuid = uuid.New()
+	FileContents := File_contents{Contents: FileList, Num_bytes: numBytes, contents_UUID: content_uuid}
 	TreeNode := Node{Key: userdata.Username, Left: nil, Right: nil}
 	UserTree := Tree{Root: &TreeNode}
-	FileStruct := File_struct{File_contents: FileContents, File_tree: UserTree}
+	var filestruct_uuid uuid.UUID
+	filestruct_uuid = uuid.New()
+	// put filestruct in datastore
+	FileStruct := File_struct{File_contents: FileContents, File_tree: UserTree, File_UUID: filestruct_uuid}
 	// generate two symmetric key pairs
-	// first keypair
+	// first keypair for file appends
 	var Encryption_key_RSA userlib.PKEEncKey
 	var Decryption_key_RSA userlib.PKEDecKey
 	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
-	userdata.DecryptionMap[storageKey] = Decryption_key_RSA
-<<<<<<< HEAD
-	var file_uuid string
-	file_uuid = userlib.Hash([]byte(filename + userdata.Username))
-	userlib.KeystoreSet(filename + "_rsa", Encryption_key_RSA)
-=======
-	userlib.KeystoreSet(filename+"_rsa", Encryption_key_RSA)
->>>>>>> bff731b42f9d51dda37047b2df4b6b18dd8746c2
+	var file_hash []byte
+	file_hash = userlib.Hash([]byte(filename))
+	userdata.FileEncryptionMap[string(file_hash)] = Encryption_key_RSA
 	if err != nil {
 		return
 	}
@@ -352,11 +358,72 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return
 	}
-	userlib.KeystoreSet(filename+"_ds", DS_verifyKey)
-	userdata.SignMap[storageKey] = DS_signKey
-	// put public keys in keystore
+	userlib.KeystoreSet(string(userlib.Hash([]byte(filename + "_ds"))), DS_verifyKey)
+	userdata.SignMap[string(file_hash)] = DS_signKey
+	var file_uuid uuid.UUID
+	file_uuid = uuid.New()
+	Invite := Invitation{Decrypt_file_key_RSA:Decryption_key_RSA, File_UUID: file_uuid, owner: true}
+	var invite_uuid uuid.UUID
+	invite_uuid = uuid.New()
+	userdata.InvitationMap[string(file_hash)] = invite_uuid
+	// Encrypt then MAC the file struct, put into datastore
+	var ciphertext_file []byte
+	var plaintext_file []byte
 
-	// use user root key
+	plaintext_file, err = json.Marshal(FileStruct)
+	if err != nil {
+		return
+	}
+	ciphertext_file, err = userlib.PKEEnc(Encryption_key_RSA, plaintext_file)
+	if err != nil {
+		return
+	}
+	var signature_file []byte
+	signature_file, err = userlib.DSSign(DS_signKey, ciphertext_file)
+	if err != nil {
+		return
+	}
+	array_file := []interface{}{ciphertext_file, signature_file}
+	var arr_file []byte
+	arr_file, err = json.Marshal(array_file)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(file_uuid, arr_file)
+	// Encrypt then MAC the invite
+	var encKey userlib.PKEEncKey
+	var ok bool
+	var hash []byte
+	hash, err = json.Marshal(userdata.Username)
+	if err != nil {
+		return
+	}
+	encKey, ok = userlib.KeystoreGet(string(hash))
+	if !ok {
+		return
+	}
+	var ciphertext []byte
+	var plaintext []byte
+	plaintext, err = json.Marshal(Invite)
+	if err != nil {
+		return
+	}
+	ciphertext, err = userlib.PKEEnc(encKey, plaintext)
+	if err != nil {
+		return
+	}
+	var signature []byte
+	signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
+	if err != nil {
+		return
+	}
+	array := []interface{}{ciphertext, signature}
+	var arr []byte
+	arr, err = json.Marshal(array)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(invite_uuid, arr)
 	return
 }
 
