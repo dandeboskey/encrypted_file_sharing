@@ -139,7 +139,7 @@ func (n *Node) insert(data string) {
 type LL_Node struct {
 	Prev *LL_Node
 	Next *LL_Node
-	Key  []byte
+	Contents  []byte
 }
 
 type List struct {
@@ -147,10 +147,10 @@ type List struct {
 	Tail *LL_Node
 }
 
-func (L *List) Insert(Key []byte) {
+func (L *List) Insert(Contents []byte) {
 	list := &LL_Node{
 		Next: L.Head,
-		Key:  Key,
+		Contents:  Contents,
 	}
 	if L.Head != nil {
 		L.Head.Prev = list
@@ -178,6 +178,7 @@ type File_contents struct {
 type File_struct struct {
 	File_contents File_contents
 	File_tree     Tree
+	File_UUID	  uuid.UUID
 }
 
 // Type Invitation struct
@@ -197,8 +198,8 @@ type User struct {
 	Decryption_key_RSA userlib.PKEDecKey            // used for decrypting invitations directing towards the user
 	DS_sign_key        userlib.PrivateKeyType       // used to sign user struct
 	InvitationMap      map[string]Invitation        // hash(filename) -> invitation struct
-	DecryptionMap      map[string]userlib.PKEDecKey // hash(filename) -> file decryption key
-	VerificationMap    map[string][]byte            // hash(filename) -> MAC verification key
+	DecryptionMap      map[uuid.UUID]userlib.PKEDecKey // hash(filename) -> file decryption key
+	SignMap    		   map[uuid.UUID]userlib.PrivateKeyType   // hash(filename) -> DS verification key
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -237,17 +238,20 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err5 != nil {
 		return
 	}
+	// put digital signature key in keystore
 	userlib.KeystoreSet(username+"_DS", DS_verify_key)
-
+	// create all of our maps
 	userdata.InvitationMap = make(map[string]Invitation)
-	userdata.DecryptionMap = make(map[string]userlib.PKEDecKey)
-	userdata.VerificationMap = make(map[string][]byte)
-
+	userdata.DecryptionMap = make(map[uuid.UUID]userlib.PKEDecKey)
+	userdata.SignMap = make(map[uuid.UUID]userlib.PrivateKeyType)
+	// get plaintext in bytes
 	var userdata_plaintext, err6 = json.Marshal(userdata)
 	if err6 != nil {
 		return
 	}
+	// encrypt plaintext, get ciphertext
 	var userdata_ciphertext = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes((16)), userdata_plaintext)
+	// sign the ciphertext
 	var userdata_signature, err7 = userlib.DSSign(userdata.DS_sign_key, userdata_ciphertext)
 	if err7 != nil {
 		return
@@ -307,6 +311,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
+	// deterministic
 	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
 	if err != nil {
 		return err
@@ -315,7 +320,38 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	userlib.DatastoreSet(storageKey, contentBytes)
+	var numBytes int
+	numBytes = len(contentBytes)
+	// throw content bytes into linkedlist node
+	// userlib.DatastoreSet(storageKey, contentBytes)
+	LLNode := LL_Node{Prev:nil, Next:nil, Contents:contentBytes}
+	FileList := List{Head:&LLNode, Tail:&LLNode}
+	FileContents := File_contents{Contents:FileList, Num_bytes:numBytes}
+	TreeNode := Node{Key:userdata.Username, Left:nil, Right:nil}
+	UserTree := Tree{Root:&TreeNode}
+	FileStruct := File_struct{File_contents:FileContents, File_tree:UserTree}
+	// generate two symmetric key pairs
+	// first keypair
+	var Encryption_key_RSA userlib.PKEEncKey
+	var Decryption_key_RSA userlib.PKEDecKey
+	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
+	userdata.DecryptionMap[storageKey] = Decryption_key_RSA
+	userlib.KeystoreSet(filename + "_rsa", Encryption_key_RSA)
+	if err != nil {
+		return
+	}
+	// store the next pair of keys in datastore
+	var DS_signKey userlib.DSSignKey
+	var DS_verifyKey userlib.DSVerifyKey
+	DS_signKey, DS_verifyKey, err = userlib.DSKeyGen()
+	if err != nil {
+		return
+	}
+	userlib.KeystoreSet(filename + "_ds", DS_verifyKey)
+	userdata.SignMap[storageKey] = DS_signKey
+	// put public keys in keystore
+
+	// use user root key
 	return
 }
 
