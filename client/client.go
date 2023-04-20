@@ -336,6 +336,8 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var Decryption_key_RSA userlib.PKEDecKey
 	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
 	userdata.DecryptionMap[storageKey] = Decryption_key_RSA
+	var file_uuid string
+	file_uuid = userlib.Hash([]byte(filename + userdata.Username))
 	userlib.KeystoreSet(filename + "_rsa", Encryption_key_RSA)
 	if err != nil {
 		return
