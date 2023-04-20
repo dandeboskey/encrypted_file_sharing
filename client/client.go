@@ -496,8 +496,36 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	file_list.Tail = &new_node
 	file_struct.Num_bytes += len(content)
 
-	// re-encrypt and re-sign file_struct
+	// re-encrypt and re-sign and re-store file_struct
+	var file_bytes []byte
+	var encKey userlib.PKEEncKey
+	var sign userlib.PrivateKeyType
+	var cipher []byte
+	var signature []byte
+	file_bytes, err2 = json.Marshal(file_struct)
+	if err2 != nil {
+		return nil
+	}
+	encKey = userdata.FileEncryptionMap[string(userlib.Hash([]byte(filename)))]
+	cipher, err2 = userlib.PKEEnc(encKey, file_bytes)
+	if err2 != nil {
+		return nil
+	}
+	
+	sign = userdata.FileSignMap[string(userlib.Hash([]byte(filename)))]
+	signature, err2 = userlib.DSSign(sign, cipher)
+	if err2 != nil {
+		return nil
+	}
 
+	array := []interface{}{cipher, signature}
+	var arr []byte
+	arr, err2 = json.Marshal(array)
+	if err2 != nil {
+		return nil
+	}
+	userlib.DatastoreSet(file_uuid, arr)
+	//PKEEnc(ek PKEEncKey, plaintext []byte)
 	// return
 
 	return nil
