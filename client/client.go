@@ -525,8 +525,6 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		return nil
 	}
 	userlib.DatastoreSet(file_uuid, arr)
-	//PKEEnc(ek PKEEncKey, plaintext []byte)
-	// return
 
 	return nil
 }
@@ -541,7 +539,82 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return nil, errors.New(strings.ToTitle("file not found"))
 	}
 	err = json.Unmarshal(dataJSON, &content)
-	return content, err
+	var inv_uuid uuid.UUID
+	var file_hash []byte
+	var inv_contents []byte
+	var dummyptr *[]interface{}
+	// get the file hash, retrieve contents from datastore
+	file_hash = userlib.Hash([]byte(filename))
+	inv_uuid = userdata.InvitationMap[string(file_hash)]
+	inv_contents, ok = userlib.DatastoreGet(inv_uuid)
+	if ok != true {
+		return
+	}
+	json.Unmarshal(inv_contents, dummyptr)
+	// unencrypt and verify the invitation
+	var realdummy = *dummyptr
+	var inv_DS_key userlib.PublicKeyType
+	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
+	if ok != true {
+		return
+	}
+	var verification_ds = realdummy[1].([]byte)
+	var ciphertext = realdummy[0].([]byte)
+	var err2 error
+	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
+	if err2 != nil {
+		return
+	} 
+	// decrypt the ciphertext, which should be the invitation
+	var plaintext []byte
+	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
+	if err2 != nil {
+		return
+	}
+	var invite Invitation
+	var invptr = &invite
+	err2 = json.Unmarshal(plaintext, invptr)
+	if err2 != nil {
+		return
+	}
+	// retrieve the file
+	var file_uuid = invite.File_UUID
+	var file_dec_key = invite.Decrypt_file_key_RSA
+	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
+	if ok2 != true {
+		return
+	} 
+	// get verification key
+	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
+	if ok3 != true {
+		return
+	}
+	var dummyptr2 *[]interface{}
+	// unmarshal and verify file struct
+	json.Unmarshal(encrypted_file_struct, dummyptr2)
+	var realdummy2 = *dummyptr2
+	var verification_ds2 = realdummy2[1].([]byte)
+	var ciphertext2 = realdummy2[0].([]byte)
+	err2 = userlib.DSVerify(file_verify_key, ciphertext2, verification_ds2)
+	if err2 != nil {
+		return
+	}
+	var plaintext2 []byte
+	// unencrypt to get the file struct
+	plaintext2, err2 = userlib.PKEDec(file_dec_key, ciphertext2)
+	if err2 != nil {
+		return
+	}
+	var file_struct File_struct
+	var file_struct_ptr = &file_struct
+	json.Unmarshal(plaintext2, file_struct_ptr)
+	var file_list = file_struct.Contents
+	var head = file_list.Head
+	// get all of the contents
+	for curr := head; curr != nil; curr = curr.Next {
+		content = append(content, curr.Contents...)
+	}
+	return content, err2
 }
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
