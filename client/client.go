@@ -166,14 +166,6 @@ func (L *List) Insert(Contents []byte) {
 
 // End Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
 
-// Type File contents struct
-
-type File_contents struct {
-	Contents      List
-	Num_bytes     int
-	contents_UUID uuid.UUID
-}
-
 // Type File struct
 
 type File_struct struct {
@@ -199,10 +191,9 @@ type User struct {
 	User_UUID          uuid.UUID                         // user's UUID, derived from root_key
 	Decryption_key_RSA userlib.PKEDecKey                 // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
 	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore. sender signs with their key, receiver checks that senders key matches public
-	InvitationMap      map[[]byte]uuid.UUID              // hash(filename) -> UUID to obtain invitation struct (for each file) from datastore, will have decryption key for file
-	SignMap            map[[]byte]userlib.PrivateKeyType // hash(filename) -> MAC verification key (for each file)
-	FileEncryptionMap  map[[]byte]userlib.PKEEncKey      // hash(filename) -> file encryption key (for future re-encryption during appends)
-	FileSignMap        map[[]byte]userlib.PrivateKeyType // hash(filename) -> file ds sign key
+	InvitationMap      map[string]uuid.UUID              // hash(filename) -> UUID to obtain invitation struct (for each file) from datastore, will have decryption key for file
+	FileSignMap        map[string]userlib.PrivateKeyType // hash(filename) -> DS sign key (for each file)
+	FileEncryptionMap  map[string]userlib.PKEEncKey      // hash(filename) -> file encryption key (for future re-encryption during appends)
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -249,9 +240,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// put digital signature key in keystore
 	userlib.KeystoreSet(username+"_DS", DS_verify_key)
 	// create all of our maps
-	userdata.InvitationMap = make(map[[]byte]Invitation)
-	userdata.SignMap = make(map[[]byte]userlib.PrivateKeyType)
-	userdata.FileEncryptionMap = make(map[[]byte]userlib.PKEEncKey)
+	userdata.InvitationMap = make(map[string]uuid.UUID)
+	userdata.FileSignMap = make(map[string]userlib.PrivateKeyType)
+	userdata.FileEncryptionMap = make(map[string]userlib.PKEEncKey)
 	// get plaintext in bytes
 	var userdata_plaintext, err6 = json.Marshal(userdata)
 	if err6 != nil {
@@ -320,10 +311,6 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	// deterministic
-	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
-	if err != nil {
-		return err
-	}
 	contentBytes, err := json.Marshal(content)
 	if err != nil {
 		return err
@@ -331,18 +318,12 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var numBytes int
 	numBytes = len(contentBytes)
 	// throw content bytes into linkedlist node
-	userlib.DatastoreSet(storageKey, contentBytes)
 	LLNode := LL_Node{Prev: nil, Next: nil, Contents: contentBytes}
 	FileList := List{Head: &LLNode, Tail: &LLNode}
-	var content_uuid uuid.UUID
-	content_uuid = uuid.New()
-	FileContents := File_contents{Contents: FileList, Num_bytes: numBytes, contents_UUID: content_uuid}
 	TreeNode := Node{Key: userdata.Username, Left: nil, Right: nil}
 	UserTree := Tree{Root: &TreeNode}
-	var filestruct_uuid uuid.UUID
-	filestruct_uuid = uuid.New()
 	// put filestruct in datastore
-	FileStruct := File_struct{File_contents: FileContents, File_tree: UserTree, File_UUID: filestruct_uuid}
+	FileStruct := File_struct{Contents: FileList, Num_bytes: numBytes, File_tree: UserTree}
 	// generate two symmetric key pairs
 	// first keypair for file appends
 	var Encryption_key_RSA userlib.PKEEncKey
@@ -362,7 +343,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return
 	}
 	userlib.KeystoreSet(string(userlib.Hash([]byte(filename+"_ds"))), DS_verifyKey)
-	userdata.SignMap[string(file_hash)] = DS_signKey
+	userdata.FileSignMap[string(file_hash)] = DS_signKey
 	var file_uuid uuid.UUID
 	file_uuid = uuid.New()
 	Invite := Invitation{Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, owner: true}
