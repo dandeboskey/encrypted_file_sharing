@@ -166,26 +166,20 @@ func (L *List) Insert(Contents []byte) {
 
 // End Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
 
-// Type File contents struct
-
-type File_contents struct {
-	Contents  List
-	Num_bytes int
-}
-
 // Type File struct
 
 type File_struct struct {
-	File_contents File_contents
-	File_tree     Tree
-	File_UUID     uuid.UUID
+	Contents  List // a linked list with head and tail nodes (containing prev, next, contents)
+	Num_bytes int
+	File_tree Tree
 }
 
 // Type Invitation struct
 
 type Invitation struct {
-	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file
+	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file_struct
 	File_UUID            uuid.UUID         // randomized file ID used to obtain file struct from DataStore
+	owner                bool              // true if user created the file
 }
 
 // This is the type definition for the User struct.
@@ -196,9 +190,11 @@ type User struct {
 	Root_key           []byte                            // a deterministic symmetric key used to derive user.UUID, and decrypt/encrypt the user struct,
 	User_UUID          uuid.UUID                         // user's UUID, derived from root_key
 	Decryption_key_RSA userlib.PKEDecKey                 // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
-	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore.
-	InvitationMap      map[[]byte]Invitation             // hash(filename) -> invitation struct
-	SignMap            map[[]byte]userlib.PrivateKeyType // hash(filename) -> MAC verification key
+	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore. sender signs with their key, receiver checks that senders key matches public
+	InvitationMap      map[[]byte]uuid.UUID              // hash(filename) -> UUID to obtain invitation struct (for each file) from datastore, will have decryption key for file
+	SignMap            map[[]byte]userlib.PrivateKeyType // hash(filename) -> MAC verification key (for each file)
+	FileEncryptionMap  map[[]byte]userlib.PKEEncKey      // hash(filename) -> file encryption key (for future re-encryption during appends)
+	FileSignMap        map[[]byte]userlib.PrivateKeyType // hash(filename) -> file ds sign key
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -240,9 +236,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// put digital signature key in keystore
 	userlib.KeystoreSet(username+"_DS", DS_verify_key)
 	// create all of our maps
-	userdata.InvitationMap = make(map[string]Invitation)
-	userdata.DecryptionMap = make(map[uuid.UUID]userlib.PKEDecKey)
-	userdata.SignMap = make(map[uuid.UUID]userlib.PrivateKeyType)
+	userdata.InvitationMap = make(map[[]byte]Invitation)
+	userdata.SignMap = make(map[[]byte]userlib.PrivateKeyType)
+	userdata.FileEncryptionMap = make(map[[]byte]userlib.PKEEncKey)
 	// get plaintext in bytes
 	var userdata_plaintext, err6 = json.Marshal(userdata)
 	if err6 != nil {
@@ -335,13 +331,9 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var Decryption_key_RSA userlib.PKEDecKey
 	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
 	userdata.DecryptionMap[storageKey] = Decryption_key_RSA
-<<<<<<< HEAD
 	var file_uuid string
 	file_uuid = userlib.Hash([]byte(filename + userdata.Username))
-	userlib.KeystoreSet(filename + "_rsa", Encryption_key_RSA)
-=======
 	userlib.KeystoreSet(filename+"_rsa", Encryption_key_RSA)
->>>>>>> bff731b42f9d51dda37047b2df4b6b18dd8746c2
 	if err != nil {
 		return
 	}
@@ -353,7 +345,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return
 	}
 	userlib.KeystoreSet(filename+"_ds", DS_verifyKey)
-	userdata.SignMap[storageKey] = DS_signKey
+	userdata.SignMap[string(storageKey)] = DS_signKey
 	// put public keys in keystore
 
 	// use user root key
