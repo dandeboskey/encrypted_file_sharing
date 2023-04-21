@@ -410,7 +410,6 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return
 	}
 	userlib.DatastoreSet(invite_uuid, arr)
-	return
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
@@ -626,11 +625,6 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	if err != nil {
 		return
 	}
-	var recipient_enc_key userlib.PKEEncKey
-	recipient_enc_key, ok = userlib.KeystoreGet(string(userlib.Hash(hash)))
-	if !ok {
-		return
-	}
 	// verify the file exists, and that the user has access
 	var file_hash []byte
 	file_hash = userlib.Hash([]byte(filename))
@@ -659,7 +653,6 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	if err != nil {
 		return
 	}
-	// get the receipients public key through keystore
 	var plaintext []byte
 	plaintext, err = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
 	if err != nil {
@@ -671,9 +664,37 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	if err != nil {
 		return
 	}
-	// general invite s
-	//Invite := Invitation{Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, Owner: false}
-	
+	// general invite structure
+	new_invite := Invitation{Decrypt_file_key_RSA: inv.Decrypt_file_key_RSA, File_UUID: inv.File_UUID, Owner: false}
+	var invite_uuid uuid.UUID
+	invite_uuid = uuid.New()
+	var recipient_enc_key userlib.PKEEncKey
+	recipient_enc_key, ok = userlib.KeystoreGet(string(userlib.Hash(hash)))
+	if !ok {
+		return
+	}
+	plaintext, err = json.Marshal(new_invite)
+	if err != nil {
+		return
+	}
+	// encrypt with recipient's public key
+	ciphertext, err = userlib.PKEEnc(recipient_enc_key, plaintext)
+	if err != nil {
+		return
+	} 
+	// sign with user's ds s
+	var signature []byte
+	signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
+	if err != nil {
+		return
+	} 
+	array := []interface{}{ciphertext, signature}
+	var arr []byte
+	arr, err = json.Marshal(array)
+	if err != nil {
+		return
+	} 
+	userlib.DatastoreSet(invite_uuid, arr)
 	// create the invitation for the file
 	
 	
@@ -682,6 +703,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
+
 	return nil
 }
 
