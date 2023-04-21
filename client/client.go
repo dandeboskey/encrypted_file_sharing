@@ -619,6 +619,65 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
 	invitationPtr uuid.UUID, err error) {
+	// verify that the recipient exists
+	var hash []byte
+	var ok bool
+	hash, err = json.Marshal(recipientUsername)
+	if err != nil {
+		return
+	}
+	var recipient_enc_key userlib.PKEEncKey
+	recipient_enc_key, ok = userlib.KeystoreGet(string(userlib.Hash(hash)))
+	if !ok {
+		return
+	}
+	// verify the file exists, and that the user has access
+	var file_hash []byte
+	file_hash = userlib.Hash([]byte(filename))
+	var invite_bytes []byte
+	// val has encryptionkey
+	inv_id, ok := userdata.InvitationMap[string(file_hash)]
+	if !ok {
+		return
+	}
+	invite_bytes, ok = userlib.DatastoreGet(inv_id)
+	if !ok {
+		return
+	}
+	var inv_DS_key userlib.PublicKeyType
+	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
+	if ok != true {
+		return
+	}
+	// user access invitation, verify that the invite is valid
+	var dummyptr *[]interface{}
+	json.Unmarshal(invite_bytes, dummyptr)
+	var realdummy = *dummyptr
+	var ciphertext = realdummy[0].([]byte)
+	var inv_arr_ds = realdummy[1].([]byte)
+	err = userlib.DSVerify(inv_DS_key, ciphertext, inv_arr_ds)
+	if err != nil {
+		return
+	}
+	// get the receipients public key through keystore
+	var plaintext []byte
+	plaintext, err = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
+	if err != nil {
+		return
+	}
+	var inv Invitation
+	var invptr = &inv
+	err = json.Unmarshal(plaintext, invptr)
+	if err != nil {
+		return
+	}
+	// general invite s
+	//Invite := Invitation{Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, Owner: false}
+	
+	// create the invitation for the file
+	
+	
+	// return invitation 
 	return
 }
 
