@@ -14,7 +14,7 @@ import (
 	// hex.EncodeToString(...) is useful for converting []byte to string
 
 	// Useful for string manipulation
-	"strings"
+	//"strings"
 
 	// Useful for formatting strings (e.g. `fmt.Sprintf`).
 	"fmt"
@@ -322,7 +322,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err7 != nil {
 		return
 	}
-	user_array := []interface{}{userdata_ciphertext, userdata_signature}
+	user_array := make([]interface{}, 2)
+	user_array[0] = userdata_ciphertext
+	user_array[1] = userdata_signature
 	var user_array_store, err8 = json.Marshal(user_array)
 	if err8 != nil {
 		return
@@ -348,9 +350,8 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	if ok == true {
-		var dummyptr *[]interface{}
-		json.Unmarshal(User, dummyptr)
-		var realdummy = *dummyptr
+		var realdummy = make([]interface{}, 2)
+		json.Unmarshal(User, &realdummy)
 		var key, ok = userlib.KeystoreGet(username + "_DS")
 		if ok == true {
 			var verification_ds = realdummy[1].([]byte)
@@ -418,17 +419,25 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	// Encrypt then MAC the file struct, put into datastore
 	var ciphertext_file []byte
 	var plaintext_file []byte
-
+	var random_key = userlib.Argon2Key(userlib.RandomBytes(16), userlib.RandomBytes(16), 16)
 	plaintext_file, err = json.Marshal(FileStruct)
 	if err != nil {
 		return
 	}
-	ciphertext_file, err = userlib.PKEEnc(Encryption_key_RSA, plaintext_file)
+	ciphertext_file = userlib.SymEnc(random_key, userlib.RandomBytes(16), plaintext_file)
+	//ciphertext_file, err = userlib.PKEEnc(Encryption_key_RSA, plaintext_enc)
+	if err != nil {
+		return
+	}
+	var enc_random_key []byte
+	enc_random_key, err = userlib.PKEEnc(Encryption_key_RSA, random_key)
 	if err != nil {
 		return
 	}
 	var signature_file []byte
+	var signature_random_key []byte
 	signature_file, err = userlib.DSSign(DS_signKey, ciphertext_file)
+	//signature_random_key, err = userlib.DSSign(DS_signKey, enc_random_key)
 	if err != nil {
 		return
 	}
