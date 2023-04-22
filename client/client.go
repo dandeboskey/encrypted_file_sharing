@@ -166,64 +166,64 @@ func (L *List) Insert(Contents []byte) {
 
 // InsertNewUser
 func (t *Tree) InsertNewUser(sender string, recipient string) {
-    var file_tree =*t
-    var cur_node = *file_tree.Root
-    if cur_node.Left == nil && cur_node.Right == nil && cur_node.Key != sender {
-        return
-    }
-    if cur_node.Key == sender {
-        if cur_node.Left != nil {
-            new_node := Node{Left: nil, Right: nil, Key: recipient}
-            cur_node.Left = &new_node
-        } else if cur_node.Right != nil {
-            new_node := Node{Left: nil, Right: nil, Key: recipient}
-            cur_node.Right = &new_node
-        }
-        return
-    } else {
-        LeftTree := Tree{cur_node.Left}
-        LeftTree.InsertNewUser(sender, recipient)
-        RightTree := Tree{cur_node.Right}
-        RightTree.InsertNewUser(sender, recipient)
-        return
-    }
+	var file_tree = *t
+	var cur_node = *file_tree.Root
+	if cur_node.Left == nil && cur_node.Right == nil && cur_node.Key != sender {
+		return
+	}
+	if cur_node.Key == sender {
+		if cur_node.Left != nil {
+			new_node := Node{Left: nil, Right: nil, Key: recipient}
+			cur_node.Left = &new_node
+		} else if cur_node.Right != nil {
+			new_node := Node{Left: nil, Right: nil, Key: recipient}
+			cur_node.Right = &new_node
+		}
+		return
+	} else {
+		LeftTree := Tree{cur_node.Left}
+		LeftTree.InsertNewUser(sender, recipient)
+		RightTree := Tree{cur_node.Right}
+		RightTree.InsertNewUser(sender, recipient)
+		return
+	}
 }
 
 // RemoveUserBranch
 func (t *Tree) RemoveUserBranch(user string) {
-    var file_tree = *t
-    var cur_node = *file_tree.Root
-    // cannot remove owner so do not need to check if cur_node == user
-    if cur_node.Left == nil && cur_node.Right == nil && cur_node.Key != user { // base case
-        return
-    }
-    var LeftNode = *(cur_node.Left)
-    var RightNode = *(cur_node.Right)
-    if LeftNode.Key == user {
-        cur_node.Left = nil
-        return
-    } else if RightNode.Key == user {
-        cur_node.Right = nil
-        return
-    }
-    LeftTree := Tree{cur_node.Left}
-    RightTree := Tree{cur_node.Right}
-    LeftTree.RemoveUserBranch(user)
-    RightTree.RemoveUserBranch(user)
+	var file_tree = *t
+	var cur_node = *file_tree.Root
+	// cannot remove owner so do not need to check if cur_node == user
+	if cur_node.Left == nil && cur_node.Right == nil && cur_node.Key != user { // base case
+		return
+	}
+	var LeftNode = *(cur_node.Left)
+	var RightNode = *(cur_node.Right)
+	if LeftNode.Key == user {
+		cur_node.Left = nil
+		return
+	} else if RightNode.Key == user {
+		cur_node.Right = nil
+		return
+	}
+	LeftTree := Tree{cur_node.Left}
+	RightTree := Tree{cur_node.Right}
+	LeftTree.RemoveUserBranch(user)
+	RightTree.RemoveUserBranch(user)
 }
 
 // Add Remaining Users to List
 func (t *Tree) AddToList(list *[]string) {
-    var file_tree = *t
-    var cur_node = *file_tree.Root
-    if file_tree.Root == nil {
-        return
-    }
-    *list = append(*list, cur_node.Key)
-    LeftTree := Tree{cur_node.Left}
-    RightTree := Tree{cur_node.Right}
-    LeftTree.AddToList(list)
-    RightTree.AddToList(list)
+	var file_tree = *t
+	var cur_node = *file_tree.Root
+	if file_tree.Root == nil {
+		return
+	}
+	*list = append(*list, cur_node.Key)
+	LeftTree := Tree{cur_node.Left}
+	RightTree := Tree{cur_node.Right}
+	LeftTree.AddToList(list)
+	RightTree.AddToList(list)
 }
 
 // End Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
@@ -239,27 +239,28 @@ type File_struct struct {
 // Type Invitation struct
 
 type Invitation struct {
-	REEncrypt_key		 userlib.PKEEncKey
+	REEncrypt_key        userlib.PKEEncKey
 	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file_struct
 	File_UUID            uuid.UUID         // randomized file ID used to obtain file struct from DataStore
-	DS_sign_key			 userlib.PrivateKeyType
-	Owner                bool              // true if user created the file
-	Current				 string
+	DS_sign_key          userlib.PrivateKeyType
+	Owner                bool // true if user created the file
+	Current              string
+	Key_UUID             uuid.UUID // using hybrid encryption for file structs
 }
 
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username           string                            // username
-	Root_key           []byte                            // a deterministic symmetric key used to derive user.UUID, and decrypt/encrypt the user struct,
-	User_UUID          uuid.UUID                         // user's UUID, derived from root_key
-	Decryption_key_RSA userlib.PKEDecKey                 // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
-	DS_sign_key        userlib.PrivateKeyType            // used to sign user struct, the corresponding verification key is placed in KeyStore. sender signs with their key, receiver checks that senders key matches public
-	InvitationMap      map[string]uuid.UUID              // hash(filename) -> UUID to obtain invitation struct (for each file) from datastore, will have decryption key for file
+	Username           string                 // username
+	Root_key           []byte                 // a deterministic symmetric key used to derive user.UUID, and decrypt/encrypt the user struct,
+	User_UUID          uuid.UUID              // user's UUID, derived from root_key
+	Decryption_key_RSA userlib.PKEDecKey      // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
+	DS_sign_key        userlib.PrivateKeyType // used to sign user struct, the corresponding verification key is placed in KeyStore. sender signs with their key, receiver checks that senders key matches public
+	InvitationMap      map[string]uuid.UUID   // hash(filename) -> UUID to obtain invitation struct (for each file) from datastore, will have decryption key for file
 	//FileSignMap        map[string]userlib.PrivateKeyType // hash(filename) -> DS sign key (for each file)
 	//FileEncryptionMap  map[string]userlib.PKEEncKey      // hash(filename) -> file encryption key (for future re-encryption during appends)
-	InviteUUIDs 		map[string][]uuid.UUID
+	InviteUUIDs map[string][]uuid.UUID
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -398,7 +399,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	var Decryption_key_RSA userlib.PKEDecKey
 	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
 	var file_enc []byte
-	file_enc = userlib.Hash([]byte(filename+"_enc"))
+	file_enc = userlib.Hash([]byte(filename + "_enc"))
 	userlib.KeystoreSet(string(file_enc), Encryption_key_RSA)
 	// second keypair for file signing
 	var DS_signKey userlib.DSSignKey
@@ -409,8 +410,10 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	}
 	userlib.KeystoreSet(string(userlib.Hash([]byte(filename+"_ds"))), DS_verifyKey)
 	var file_uuid uuid.UUID
+	var key_uuid uuid.UUID
 	file_uuid = uuid.New()
-	Invite := Invitation{REEncrypt_key: Encryption_key_RSA, DS_sign_key: DS_signKey, Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, Owner: true, Current: userdata.Username}
+	key_uuid = uuid.New()
+	Invite := Invitation{REEncrypt_key: Encryption_key_RSA, DS_sign_key: DS_signKey, Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, Owner: true, Current: userdata.Username, Key_UUID: key_uuid}
 	var invite_uuid uuid.UUID
 	invite_uuid = uuid.New()
 	userdata.InvitationMap[string(file_enc)] = invite_uuid
@@ -448,7 +451,16 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return
 	}
 	userlib.DatastoreSet(file_uuid, arr_file)
-	// Encrypt then MAC the invite
+
+	array_key := []interface{}{enc_random_key, signature_random_key}
+	var arr_key []byte
+	arr_key, err = json.Marshal(array_key)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(key_uuid, arr_key)
+
+	// Encrypt then sign the invite
 	var encKey userlib.PKEEncKey
 	var ok bool
 	var hash []byte
@@ -585,7 +597,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	if err2 != nil {
 		return nil
 	}
-	
+
 	sign = inv.DS_sign_key
 	signature, err2 = userlib.DSSign(sign, cipher)
 	if err2 != nil {
@@ -630,7 +642,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
 	if err2 != nil {
 		return
-	} 
+	}
 	// decrypt the ciphertext, which should be the invitation
 	var plaintext []byte
 	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
@@ -649,7 +661,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
 	if ok2 != true {
 		return
-	} 
+	}
 	// get verification key
 	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
 	if ok3 != true {
@@ -749,19 +761,19 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	ciphertext, err = userlib.PKEEnc(recipient_enc_key, plaintext)
 	if err != nil {
 		return
-	} 
+	}
 	// sign with user's ds sign key
 	var signature []byte
 	signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
 	if err != nil {
 		return
-	} 
+	}
 	array := []interface{}{ciphertext, signature}
 	var arr []byte
 	arr, err = json.Marshal(array)
 	if err != nil {
 		return
-	} 
+	}
 	userlib.DatastoreSet(invite_uuid, arr)
 	var userdata_plaintext, err6 = json.Marshal(userdata)
 	if err6 != nil {
@@ -780,7 +792,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return
 	}
 	userlib.DatastoreSet(userdata.User_UUID, user_array_store)
-	// return invitation 
+	// return invitation
 	return invite_uuid, err
 }
 
@@ -911,7 +923,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
 	if err2 != nil {
 		return nil
-	} 
+	}
 	// decrypt the ciphertext, which should be the invitation
 	var plaintext []byte
 	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
@@ -923,7 +935,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	err2 = json.Unmarshal(plaintext, invptr)
 	if err2 != nil {
 		return nil
-	} 
+	}
 	if invite.Owner == false {
 		return nil
 	}
@@ -933,7 +945,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
 	if ok2 != true {
 		return nil
-	} 
+	}
 	// get verification key
 	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
 	if ok3 != true {
@@ -962,7 +974,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	file_struct.File_tree.RemoveUserBranch(recipientUsername)
 
 	// go through the remaining tree, update the invitation private keys
-	var list[]string
+	var list []string
 	file_struct.File_tree.AddToList(&list)
 	// create the new file
 	FileStruct := File_struct{Contents: file_struct.Contents, Num_bytes: file_struct.Num_bytes, File_tree: file_struct.File_tree}
@@ -972,7 +984,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	var Decryption_key_RSA userlib.PKEDecKey
 	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
 	var file_enc []byte
-	file_enc = userlib.Hash([]byte(filename+"_enc"))
+	file_enc = userlib.Hash([]byte(filename + "_enc"))
 	userlib.KeystoreSet(string(file_enc), Encryption_key_RSA)
 	// generate keys digital signatures (invitations)
 	var DS_signKey userlib.DSSignKey
@@ -1028,7 +1040,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
 			if err2 != nil {
 				return nil
-			} 
+			}
 			// decrypt the ciphertext, which should be the invitation
 			var plaintext []byte
 			plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
@@ -1040,7 +1052,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			err2 = json.Unmarshal(plaintext, invptr)
 			if err2 != nil {
 				return nil
-			} 
+			}
 			if invite.Current == username {
 				invite.DS_sign_key = DS_signKey
 				invite.Decrypt_file_key_RSA = Decryption_key_RSA
@@ -1062,23 +1074,23 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 				ciphertext, err = userlib.PKEEnc(rec_key_enc, plaintext)
 				if err != nil {
 					return nil
-				} 
+				}
 				// sign with user's ds sign key
 				var signature []byte
-				hash, err = json.Marshal(username+"_DS")
+				hash, err = json.Marshal(username + "_DS")
 				if err != nil {
 					return nil
 				}
 				signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
 				if err != nil {
 					return nil
-				} 
+				}
 				array := []interface{}{ciphertext, signature}
 				var arr []byte
 				arr, err = json.Marshal(array)
 				if err != nil {
 					return nil
-				} 
+				}
 				userlib.DatastoreSet(inv_id, arr)
 			} else {
 				continue
