@@ -14,7 +14,7 @@ import (
 	// hex.EncodeToString(...) is useful for converting []byte to string
 
 	// Useful for string manipulation
-	//"strings"
+	"strings"
 
 	// Useful for formatting strings (e.g. `fmt.Sprintf`).
 	"fmt"
@@ -97,6 +97,7 @@ func someUsefulThings() {
 }
 
 // Source: https://www.bogotobogo.com/GoLang/GoLang_Binary_Search_Tree.php
+
 type Tree struct {
 	Root *Node
 }
@@ -226,6 +227,28 @@ func (t *Tree) AddToList(list *[]string) {
 	RightTree.AddToList(list)
 }
 
+func (t *Tree) GetKeys() []string {
+	return collectKeys(t.Root, []string{})
+}
+
+func collectKeys(node *Node, keys []string) []string {
+	if node == nil {
+		return keys
+	}
+
+	keys = append(keys, node.Key)
+
+	if node.Left != nil {
+		keys = collectKeys(node.Left, keys)
+	}
+	if node.Right != nil {
+		keys = collectKeys(node.Right, keys)
+	}
+
+	return keys
+}
+	
+
 // End Source: https://www.golangprograms.com/golang-program-for-implementation-of-linked-list.html
 
 // Type File struct
@@ -239,13 +262,16 @@ type File_struct struct {
 // Type Invitation struct
 
 type Invitation struct {
-	REEncrypt_key        userlib.PKEEncKey
-	Decrypt_file_key_RSA userlib.PKEDecKey // used for decrypting file_struct
-	File_UUID            uuid.UUID         // randomized file ID used to obtain file struct from DataStore
-	DS_sign_key          userlib.PrivateKeyType
-	Owner                bool // true if user created the file
-	Current              string
-	Key_UUID             uuid.UUID // using hybrid encryption for file structs
+	File_uuid uuid.UUID// a random file ID used to load the file struct from DataStore
+	Dec_file_key userlib.PKEDecKey // an RSA private key used to decrypt the File struct
+	Verify_file_key userlib.PublicKeyType // a DS verification key used to verify the File struct
+	User string // the recipient of the invitation
+	Filetree_uuid uuid.UUID // a random ID used to load the file tree from DataStore
+	Sym_filetree_key []byte //a random symmetric key used to encrypt and decrypt the file tree
+	Sign_filetree_key userlib.PrivateKeyType // a DS signing key used to sign the file tree
+	Verify_filetree_key userlib.PublicKeyType // a DS verification key used to verify the file tree
+	Owner bool // to check permissions for appending and revocation
+	Accepted bool // used in file sharing
 }
 
 // This is the type definition for the User struct.
@@ -255,12 +281,11 @@ type User struct {
 	Username           string                 // username
 	Root_key           []byte                 // a deterministic symmetric key used to derive user.UUID, and decrypt/encrypt the user struct,
 	User_UUID          uuid.UUID              // user's UUID, derived from root_key
-	Decryption_key_RSA userlib.PKEDecKey      // a random asymmetric key used for decrypting invitations directed towards the user, the corresponding encryption key is in keystore to encrypt invitations.
-	DS_sign_key        userlib.PrivateKeyType // used to sign user struct, the corresponding verification key is placed in KeyStore. sender signs with their key, receiver checks that senders key matches public
-	InvitationMap      map[string]uuid.UUID   // hash(filename) -> UUID to obtain invitation struct (for each file) from datastore, will have decryption key for file
-	//FileSignMap        map[string]userlib.PrivateKeyType // hash(filename) -> DS sign key (for each file)
-	//FileEncryptionMap  map[string]userlib.PKEEncKey      // hash(filename) -> file encryption key (for future re-encryption during appends)
-	InviteUUIDs map[string][]uuid.UUID
+	Dec_inv_key 	   userlib.PKEDecKey  // an RSA private key used to decrypt invitation structs sent to the user
+	Sign_inv_key 	   userlib.PrivateKeyType  // a DS key used to sign invitations structs sent to other others
+	InvitationMap 	   map[string]uuid.UUID // maps the filename to the file’s invitation struct’s uuid (random) so that the user may load the invitation struct 
+	FileEncMap 		   map[string]userlib.PKEEncKey // maps the filename to the file’s encryption key (File_enc_key)
+	FileSignMap        map[string]userlib.PrivateKeyType // maps the filename to the file’s signing key (File_sign_key)
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -275,111 +300,201 @@ type User struct {
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
-	var password_bytes, err1 = json.Marshal(password)
-	var salt_bytes, err2 = json.Marshal(1) // salt = 1 for determinism
-	if err1 != nil || err2 != nil {
-		return
-	}
-	userdata.Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 16)
-	var err3 error
-	userdata.User_UUID, err3 = uuid.FromBytes(userdata.Root_key)
-	if err3 != nil {
-		return
-	}
-	var Encryption_key_RSA userlib.PKEEncKey
-	var err4 error
-	if err4 != nil {
-		return
-	}
-	Encryption_key_RSA, userdata.Decryption_key_RSA, err4 = userlib.PKEKeyGen()
-	var hash []byte
-	hash, err = json.Marshal(userdata.Username)
+	var password_bytes, salt_bytes []byte
+	password_bytes, err = json.Marshal(password)
 	if err != nil {
 		return
 	}
-	userlib.KeystoreSet(string(userlib.Hash(hash)), Encryption_key_RSA)
-	var err5 error
+	salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
+	if err != nil {
+		return 
+	}
+	// generate root key
+	userdata.Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 16)
+	// generate uuid from rootkey
+	userdata.User_UUID, err = uuid.FromBytes(userdata.Root_key)
+	if err != nil {
+		return
+	}
+	// generate DS key pairs for sign & verify user struct
 	var DS_verify_key userlib.PublicKeyType
-	userdata.DS_sign_key, DS_verify_key, err5 = userlib.DSKeyGen()
-	if err5 != nil {
+	var DS_sign_key userlib.DSSignKey
+	DS_sign_key, DS_verify_key, err = userlib.DSKeyGen()
+	if err != nil {
 		return
 	}
-	// put digital signature key in keystore
-	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_DS"))), DS_verify_key)
-	// create all of our maps
+	// put verification key in keystore: hash(username + “_user_verify”):Verify_user_key
+	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_user_verify"))), DS_verify_key)
+	// generate RSA key pair for encrypting and decrypting invitations
+	var Enc_inv_key userlib.PKEEncKey
+	Enc_inv_key, userdata.Dec_inv_key, err = userlib.PKEKeyGen()
+	// put invitation encryption key in keystore: hash(username + “_inv_enc”):Enc_inv_key
+	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_inv_enc"))), Enc_inv_key)
+	// generate DS key pairs for sign & verify invitations
+	var inv_verify_key userlib.DSVerifyKey
+	userdata.Sign_inv_key, inv_verify_key, err = userlib.DSKeyGen()
+	if err != nil {
+		return
+	}
+	// put invitation verification key in keystore: hash(username + “_inv_verify”):Verify_inv_key
+	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_inv_verify"))), inv_verify_key)
+
 	userdata.InvitationMap = make(map[string]uuid.UUID)
-	userdata.InviteUUIDs = make(map[string][]uuid.UUID)
-	//userdata.FileSignMap = make(map[string]userlib.PrivateKeyType)
-	//userdata.FileEncryptionMap = make(map[string]userlib.PKEEncKey)
-	// get plaintext in bytes
-	var userdata_plaintext, err6 = json.Marshal(userdata)
-	if err6 != nil {
+	userdata.FileSignMap = make(map[string]userlib.PrivateKeyType)
+	userdata.FileEncMap = make(map[string]userlib.PKEEncKey)
+	// symmetric encryption then signing
+	userdata_bytes, err := json.Marshal(userdata)
+	if err != nil {
 		return
 	}
-	// encrypt plaintext, get ciphertext
-	var userdata_ciphertext = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes((16)), userdata_plaintext)
-	// sign the ciphertext
-	var userdata_signature, err7 = userlib.DSSign(userdata.DS_sign_key, userdata_ciphertext)
-	if err7 != nil {
+	var userdata_cipher = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes(16), userdata_bytes)
+	userdata_signature, err := userlib.DSSign(DS_sign_key, userdata_cipher)
+	if err != nil {
 		return
-	}
+	} 
 	user_array := make([]interface{}, 2)
-	user_array[0] = userdata_ciphertext
+	user_array[0] = userdata_cipher
 	user_array[1] = userdata_signature
-	var user_array_store, err8 = json.Marshal(user_array)
-	if err8 != nil {
+	user_array_store, err := json.Marshal(user_array)
+	if err != nil {
 		return
 	}
 	userlib.DatastoreSet(userdata.User_UUID, user_array_store)
 	return &userdata, nil
 }
 
-func GetUser(username string, password string) (userdataptr *User, err error) {
-	var userdata User
-	userdataptr = &userdata
-	var password_bytes, err1 = json.Marshal(password)
-	var salt_bytes, err2 = json.Marshal(1)
-	if err1 != nil || err2 != nil {
-		return
+func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey, data []byte, id uuid.UUID) (err error) {
+	// Generate a symmetric key
+	var password, salt_bytes, key []byte
+	password = userlib.RandomBytes(16)
+	salt_bytes = userlib.RandomBytes(16)
+	key = userlib.Argon2Key(password, salt_bytes, 16)
+	// Encrypt the data with the symmetric key
+	ciphertext := userlib.SymEnc(key, userlib.RandomBytes(16), data)
+	// Sign the encrypted data
+	signed, err := userlib.DSSign(sign_key, ciphertext)
+	if err != nil {
+		return nil
 	}
-	var Root_key = userlib.Argon2Key(password_bytes, salt_bytes, 16)
-	var err3 error
-	var User_UUID uuid.UUID
-	User_UUID, err3 = uuid.FromBytes(Root_key)
-	var User, ok = userlib.DatastoreGet(User_UUID)
-	if err3 != nil {
-		return
+	// Encrypt the symmetric key
+	enc_sym_key, err := userlib.PKEEnc(enc_key, key)
+	if err != nil {
+		return nil
 	}
-	if ok == true {
-		var realdummy = make([]interface{}, 2)
-		json.Unmarshal(User, &realdummy)
-		var key, ok = userlib.KeystoreGet(username + "_DS")
-		if ok == true {
-			var verification_ds = realdummy[1].([]byte)
-			var cipher = realdummy[0].([]byte)
-			var err4 error
-			err4 = userlib.DSVerify(key, cipher, verification_ds)
-			if err4 != nil {
-				return
-			}
-			// everything is verified
-			var plaintext = userlib.SymDec(Root_key, cipher)
-			var err5 error
-			err5 = json.Unmarshal(plaintext, userdataptr)
-			if err5 != nil {
-				return
-			}
-			return userdataptr, err5
-		} else {
-			return
-		}
+	// Create an array with (encrypted data, signature, encrypted symmetric key)
+	user_array := make([]interface{}, 3)
+	user_array[0] = ciphertext
+	user_array[1] = signed
+	user_array[2] = enc_sym_key
+	// Marshal the array
+	user_array_store, err := json.Marshal(user_array)
+	if err != nil {
+		return nil
 	}
+	// Store array in datastore with id
+	userlib.DatastoreSet(id, user_array_store)
+}
 
-	return userdataptr, nil
+func HybridVerifyThenDecrypt(dec_key userlib.PKEDecKey, verify_key userlib.DSVerifyKey, data []byte, id uuid.UUID) (content []byte, err error) {
+	// Load the data from datastore with id
+	enc_data, ok := userlib.DatastoreGet(id)
+	if !ok {
+		return
+	}
+	// Unmarshal the array
+	realdummy := make([]interface{}, 3)
+	json.Unmarshal(enc_data, &realdummy)
+	ciphertext := realdummy[0].([]byte)
+	verification := realdummy[1].([]byte)
+	encrypted_sym_key := realdummy[2].([]byte)
+	// Verify the signature with verify_key
+	err = userlib.DSVerify(verify_key, ciphertext, verification)
+	if err != nil {
+		return
+	}
+	// Decrypt symmetric key (in array) with dec_key
+	sym_key, err := userlib.PKEDec(dec_key, encrypted_sym_key)
+	if err != nil {
+		return
+	}
+	err = userlib.DSVerify(verify_key, ciphertext, verification)
+	if err != nil {
+		return
+	}
+	// Decrypt the encrypted data with the decrypted symmetric key
+	new_data := userlib.SymDec(sym_key, ciphertext)
+	return new_data, err
+}
+
+func GetUser(username string, password string) (userdataptr *User, err error) {
+	// generate root key for user
+	var password_bytes, salt_bytes []byte
+	password_bytes, err = json.Marshal(password)
+	if err != nil {
+		return
+	}
+	salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
+	if err != nil {
+		return 
+	}
+	// generate root key
+	root_key := userlib.Argon2Key(password_bytes, salt_bytes, 16)
+	// get the user uuid
+	user_id, err := uuid.FromBytes(root_key)
+	if err != nil {
+		return
+	} 
+	User, ok := userlib.DatastoreGet(user_id)
+	// verify that user exists in datastore
+	if !ok {
+		return
+	}
+	// pull encrypted & signed user struct from datastore 
+	var realdummy = make([]interface{}, 2)
+	json.Unmarshal(User, &realdummy)
+	key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(username+"_user_verify"))))
+	if !ok {
+		return
+	}
+	// verify and decrypt user struct
+	var verification_ds = realdummy[1].([]byte)
+	var cipher = realdummy[0].([]byte)
+	err = userlib.DSVerify(key, cipher, verification_ds)
+	if err != nil {
+		return
+	}
+	var plaintext = userlib.SymDec(root_key, cipher)
+	// set userdataptr to the unencrypted and verified user struct
+	err = json.Unmarshal(plaintext, userdataptr)
+	if err != nil {
+		return
+	}
+	return userdataptr, err
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
-	// deterministic
+	// generate random file uuid
+	file_id := uuid.New()
+	// generate random invite uuid
+	inv_id := uuid.New()
+	// InvitationMap := filename:Inv_uuid
+	userdata.InvitationMap[filename]=inv_id
+	// generate RSA keypair
+	Encryption_key_RSA, Decryption_key_RSA, err := userlib.PKEKeyGen()
+	// place the encryption key in the user’s FileEncMap 
+	userdata.FileEncMap[filename]=Encryption_key_RSA
+	// place the decryption key (Dec_file_key) in the file’s Invitation.
+
+	// generate a pair of file digital signature keys
+	DS_signKey, DS_verifyKey, err := userlib.DSKeyGen()
+	if err != nil {
+		return
+	}
+	// place the sign key in FileSignMap 
+	userdata.FileSignMap[filename] = DS_signKey
+	// place the verification key (Verify_file_key) in the file’s Invitation. 
+
+	// create file struct
 	contentBytes, err := json.Marshal(content)
 	if err != nil {
 		return err
@@ -390,713 +505,370 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	LLNode := LL_Node{Prev: nil, Next: nil, Contents: contentBytes}
 	FileList := List{Head: &LLNode, Tail: &LLNode}
 	TreeNode := Node{Key: userdata.Username, Left: nil, Right: nil}
+	// We create a filetree with the user as root.
 	UserTree := Tree{Root: &TreeNode}
+	UserTree_uuid := uuid.New()
+	// create symmetric key for file tree (put in invitation)
+	var password, salt_bytes, sym_key []byte
+	password = userlib.RandomBytes(16)
+	salt_bytes = userlib.RandomBytes(16)
+	sym_key = userlib.Argon2Key(password, salt_bytes, 16)
+	// create DS key pair for file tree (put both in invitation)
+	DS_signKey_ft, DS_verifyKey_ft, err := userlib.DSKeyGen()
+	if err != nil {
+		return
+	}
 	// put filestruct in datastore
-	FileStruct := File_struct{Contents: FileList, Num_bytes: numBytes, File_tree: UserTree}
-	// generate two symmetric key pairs
-	// first keypair for file encryption
-	var Encryption_key_RSA userlib.PKEEncKey
-	var Decryption_key_RSA userlib.PKEDecKey
-	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
-	var file_enc []byte
-	file_enc = userlib.Hash([]byte(filename + "_enc"))
-	userlib.KeystoreSet(string(file_enc), Encryption_key_RSA)
-	// second keypair for file signing
-	var DS_signKey userlib.DSSignKey
-	var DS_verifyKey userlib.DSVerifyKey
-	DS_signKey, DS_verifyKey, err = userlib.DSKeyGen()
+	FileStruct := File_struct{Contents: FileList, 
+		Num_bytes: numBytes, 
+		File_tree: UserTree}
+	// create invitation struct for owner
+	Invite := Invitation{File_uuid: file_id, 
+		Dec_file_key: Decryption_key_RSA, 
+		Verify_file_key: DS_verifyKey, 
+		User: userdata.Username, 
+		Filetree_uuid: UserTree_uuid, 
+		Sym_filetree_key: sym_key, 
+		Sign_filetree_key: DS_signKey_ft, 
+		Verify_filetree_key: DS_verifyKey_ft,
+		Owner: true,
+		Accepted: true}
+	// hybrid encrypt then sign file struct
+	// store it in DataStore with key = File_uuid
+	FileBytes, err := json.Marshal(FileStruct)
 	if err != nil {
 		return
 	}
-	userlib.KeystoreSet(string(userlib.Hash([]byte(filename+"_ds"))), DS_verifyKey)
-	var file_uuid uuid.UUID
-	var key_uuid uuid.UUID
-	file_uuid = uuid.New()
-	key_uuid = uuid.New()
-	Invite := Invitation{REEncrypt_key: Encryption_key_RSA, DS_sign_key: DS_signKey, Decrypt_file_key_RSA: Decryption_key_RSA, File_UUID: file_uuid, Owner: true, Current: userdata.Username, Key_UUID: key_uuid}
-	var invite_uuid uuid.UUID
-	invite_uuid = uuid.New()
-	userdata.InvitationMap[string(file_enc)] = invite_uuid
-	userdata.InviteUUIDs[filename] = make([]uuid.UUID, 0)
-	userdata.InviteUUIDs[filename] = append(userdata.InviteUUIDs[filename], invite_uuid)
-	// Encrypt then MAC the file struct, put into datastore
-	var ciphertext_file []byte
-	var plaintext_file []byte
-	var random_key = userlib.Argon2Key(userlib.RandomBytes(16), userlib.RandomBytes(16), 16)
-	plaintext_file, err = json.Marshal(FileStruct)
+	err = HybridEncryptThenSign(Encryption_key_RSA, DS_signKey, FileBytes, file_id)
 	if err != nil {
 		return
 	}
-	ciphertext_file = userlib.SymEnc(random_key, userlib.RandomBytes(16), plaintext_file)
-	//ciphertext_file, err = userlib.PKEEnc(Encryption_key_RSA, plaintext_enc)
+	// hybrid encrypt then sign invitation
+	// store it in Datastore with key = Inv_uuid
+	InviteBytes, err := json.Marshal(Invite)
 	if err != nil {
 		return
 	}
-	var enc_random_key []byte
-	enc_random_key, err = userlib.PKEEnc(Encryption_key_RSA, random_key)
+	err = HybridEncryptThenSign(Encryption_key_RSA, DS_signKey, InviteBytes, inv_id)
 	if err != nil {
 		return
 	}
-	var signature_file []byte
-	var signature_random_key []byte
-	signature_file, err = userlib.DSSign(DS_signKey, ciphertext_file)
-	//signature_random_key, err = userlib.DSSign(DS_signKey, enc_random_key)
+	// symmetric encrypt and sign the filetree
+	FileTreeBytes, err := json.Marshal(UserTree)
 	if err != nil {
 		return
 	}
-	array_file := []interface{}{ciphertext_file, signature_file}
-	var arr_file []byte
-	arr_file, err = json.Marshal(array_file)
-	if err != nil {
-		return
-	}
-	userlib.DatastoreSet(file_uuid, arr_file)
-
-	array_key := []interface{}{enc_random_key, signature_random_key}
-	var arr_key []byte
-	arr_key, err = json.Marshal(array_key)
-	if err != nil {
-		return
-	}
-	userlib.DatastoreSet(key_uuid, arr_key)
-
-	// Encrypt then sign the invite
-	var encKey userlib.PKEEncKey
-	var ok bool
-	var hash []byte
-	var userbytes []byte
-	userbytes, err = json.Marshal(userdata.Username)
-	if err != nil {
-		return
-	}
-	hash = userlib.Hash(userbytes)
-	encKey, ok = userlib.KeystoreGet(string(hash))
-	if !ok {
-		return
-	}
-	var ciphertext []byte
-	var plaintext []byte
-	plaintext, err = json.Marshal(Invite)
-	if err != nil {
-		return
-	}
-	ciphertext, err = userlib.PKEEnc(encKey, plaintext)
-	if err != nil {
-		return
-	}
-	var signature []byte
-	signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
-	if err != nil {
-		return
-	}
-	array := []interface{}{ciphertext, signature}
-	var arr []byte
-	arr, err = json.Marshal(array)
-	if err != nil {
-		return
-	}
-	userlib.DatastoreSet(invite_uuid, arr)
-	return
+	cipher := userlib.SymEnc(sym_key, userlib.RandomBytes(16), FileTreeBytes)
+	// store it in datastore with key = Filetree_uuid
+	userlib.DatastoreSet(UserTree_uuid, cipher)
+	return err
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
-	// get array from datastore, verify DS, unencrpt inv -> get invitation
-	var file_hash string
-	file_hash = string(userlib.Hash([]byte(filename)))
-	var val, err = userdata.InvitationMap[file_hash]
-	if err != true {
+	// get Inv_uuid from InvitationMap
+	inv_id := userdata.InvitationMap[filename]
+	// pull the invitation from datastore via Inv_uuid
+	InviteBytes, ok := userlib.DatastoreGet(inv_id)
+	if !ok {
 		return nil
 	}
-	var inv_ciphertext_DS, ok = userlib.DatastoreGet(val)
-	if ok != true {
+	// hybrid decrypt and verify the invitation
+	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username+"_inv_verify"))))
+	if !ok {
 		return nil
 	}
-	var dummyptr *[]interface{}
-	json.Unmarshal(inv_ciphertext_DS, dummyptr)
-	var realdummy = *dummyptr
-	var inv_DS_key userlib.PublicKeyType
-
-	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
-	if ok != true {
+	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
+	if err != nil {
 		return nil
 	}
-	var verification_ds = realdummy[1].([]byte)
-	var ciphertext = realdummy[0].([]byte)
-	var err2 error
-	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
-	if err2 != nil {
-		return err2
-	}
-	var plaintext []byte
-	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
-	if err2 != nil {
-		return err2
-	}
-	var inv Invitation
-	var invptr = &inv
-	err2 = json.Unmarshal(plaintext, invptr)
-	if err2 != nil {
-		return err2
-	}
-
-	// check owner is true
-	if inv.Owner != true {
+	var invite Invitation
+	err = json.Unmarshal(invitation, &invite)
+	if err != nil {
 		return nil
 	}
-
-	// get filestruct from Datastore
-	var file_uuid = inv.File_UUID
-	var file_dec_key = inv.Decrypt_file_key_RSA
-	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
-	if ok2 != true {
+	// verify invitation is owner's
+	if !invite.Owner {
 		return nil
 	}
-	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
-	if ok3 != true {
+	// pull file from datastore via invitation key
+	var file_id = invite.File_uuid
+	var file_dec_key = invite.Dec_file_key
+	var file_ver_key = invite.Verify_file_key
+	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
+	if !ok {
 		return nil
 	}
-	var dummyptr2 *[]interface{}
-	json.Unmarshal(encrypted_file_struct, dummyptr2)
-	var realdummy2 = *dummyptr2
-	var verification_ds2 = realdummy2[1].([]byte)
-	var ciphertext2 = realdummy2[0].([]byte)
-	err2 = userlib.DSVerify(file_verify_key, ciphertext2, verification_ds2)
-	if err2 != nil {
-		return err2
-	}
-	var plaintext2 []byte
-	plaintext2, err2 = userlib.PKEDec(file_dec_key, ciphertext2)
-	if err2 != nil {
-		return err2
-	}
+	// hybrid decrypt and verify the file
+	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key,encrypted_file_struct, file_id)
 	var file_struct File_struct
-	var file_struct_ptr = &file_struct
-	json.Unmarshal(plaintext2, file_struct_ptr)
-
-	// get file contents
-	// append to contents.tail and update num_bytes
+	json.Unmarshal(file_bytes, &file_struct)
+	// append content to file struct contents
 	var file_list = file_struct.Contents
 	var tail_ptr = file_list.Tail
 	new_node := LL_Node{Prev: tail_ptr, Next: nil, Contents: content}
 	*tail_ptr.Next = new_node
 	file_list.Tail = &new_node
 	file_struct.Num_bytes += len(content)
-
-	// re-encrypt and re-sign and re-store file_struct
-	var file_bytes []byte
-	var encKey userlib.PKEEncKey
-	var sign userlib.PrivateKeyType
-	var cipher []byte
-	var signature []byte
-	file_bytes, err2 = json.Marshal(file_struct)
-	if err2 != nil {
+	new_file_bytes, err := json.Marshal(file_struct)
+	if err != nil {
 		return nil
 	}
-	encKey = inv.REEncrypt_key
-	cipher, err2 = userlib.PKEEnc(encKey, file_bytes)
-	if err2 != nil {
-		return nil
-	}
-
-	sign = inv.DS_sign_key
-	signature, err2 = userlib.DSSign(sign, cipher)
-	if err2 != nil {
-		return nil
-	}
-
-	array := []interface{}{cipher, signature}
-	var arr []byte
-	arr, err2 = json.Marshal(array)
-	if err2 != nil {
-		return nil
-	}
-	userlib.DatastoreSet(file_uuid, arr)
-
+	// encrypt and sign file
+	// put in datastore
+	file_enc_key := userdata.FileEncMap[filename]
+	file_sign_key := userdata.FileSignMap[filename]
+	HybridEncryptThenSign(file_enc_key, file_sign_key, new_file_bytes, file_id)
 	return nil
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
-	var ok bool
-	var inv_uuid uuid.UUID
-	var file_hash []byte
-	var inv_contents []byte
-	var dummyptr *[]interface{}
-	// get the file hash, retrieve contents from datastore
-	file_hash = userlib.Hash([]byte(filename))
-	inv_uuid = userdata.InvitationMap[string(file_hash)]
-	inv_contents, ok = userlib.DatastoreGet(inv_uuid)
-	if ok != true {
+	// get Inv_uuid from InvitationMap
+	inv_id := userdata.InvitationMap[filename]
+	// pull the invitation from datastore via Inv_uuid
+	InviteBytes, ok := userlib.DatastoreGet(inv_id)
+	if !ok {
 		return
 	}
-	json.Unmarshal(inv_contents, dummyptr)
-	// unencrypt and verify the invitation
-	var realdummy = *dummyptr
-	var inv_DS_key userlib.PublicKeyType
-	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
-	if ok != true {
+	// hybrid decrypt and verify the invitation
+	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username+"_inv_verify"))))
+	if !ok {
 		return
 	}
-	var verification_ds = realdummy[1].([]byte)
-	var ciphertext = realdummy[0].([]byte)
-	var err2 error
-	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
-	if err2 != nil {
-		return
-	}
-	// decrypt the ciphertext, which should be the invitation
-	var plaintext []byte
-	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
-	if err2 != nil {
+	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
+	if err != nil {
 		return
 	}
 	var invite Invitation
-	var invptr = &invite
-	err2 = json.Unmarshal(plaintext, invptr)
-	if err2 != nil {
+	err = json.Unmarshal(invitation, &invite)
+	if err != nil {
 		return
 	}
-	// retrieve the file
-	var file_uuid = invite.File_UUID
-	var file_dec_key = invite.Decrypt_file_key_RSA
-	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
-	if ok2 != true {
+	// pull file from datastore via invitation key
+	var file_id = invite.File_uuid
+	var file_dec_key = invite.Dec_file_key
+	var file_ver_key = invite.Verify_file_key
+	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
+	if !ok {
 		return
 	}
-	// get verification key
-	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
-	if ok3 != true {
-		return
-	}
-	var dummyptr2 *[]interface{}
-	// unmarshal and verify file struct
-	json.Unmarshal(encrypted_file_struct, dummyptr2)
-	var realdummy2 = *dummyptr2
-	var verification_ds2 = realdummy2[1].([]byte)
-	var ciphertext2 = realdummy2[0].([]byte)
-	err2 = userlib.DSVerify(file_verify_key, ciphertext2, verification_ds2)
-	if err2 != nil {
-		return
-	}
-	var plaintext2 []byte
-	// unencrypt to get the file struct
-	plaintext2, err2 = userlib.PKEDec(file_dec_key, ciphertext2)
-	if err2 != nil {
-		return
-	}
+	// hybrid decrypt and verify the file
+	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key,encrypted_file_struct, file_id)
 	var file_struct File_struct
-	var file_struct_ptr = &file_struct
-	json.Unmarshal(plaintext2, file_struct_ptr)
+	json.Unmarshal(file_bytes, &file_struct)
+	// iterate through contents, return contents as a list
 	var file_list = file_struct.Contents
 	var head = file_list.Head
 	// get all of the contents
 	for curr := head; curr != nil; curr = curr.Next {
 		content = append(content, curr.Contents...)
 	}
-	return content, err2
+	return content, err
 }
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
 	invitationPtr uuid.UUID, err error) {
-	// verify that the recipient exists
-	var hash []byte
-	var ok bool
-	hash, err = json.Marshal(recipientUsername)
-	if err != nil {
-		return
-	}
-	// verify the file exists, and that the user has access
-	var file_hash []byte
-	file_hash = userlib.Hash([]byte(filename))
-	var invite_bytes []byte
-	inv_id, ok := userdata.InvitationMap[string(file_hash)]
+	// get Inv_uuid from InvitationMap
+	inv_id := userdata.InvitationMap[filename]
+	// pull the invitation from datastore via Inv_uuid
+	InviteBytes, ok := userlib.DatastoreGet(inv_id)
 	if !ok {
 		return
 	}
-	userdata.InviteUUIDs[filename] = append(userdata.InviteUUIDs[filename], inv_id)
-	invite_bytes, ok = userlib.DatastoreGet(inv_id)
+	// hybrid decrypt and verify the invitation
+	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username+"_inv_verify"))))
 	if !ok {
 		return
 	}
-	var inv_DS_key userlib.PublicKeyType
-	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
-	if ok != true {
-		return
-	}
-	// user access invitation, verify that the invite is valid
-	var dummyptr *[]interface{}
-	json.Unmarshal(invite_bytes, dummyptr)
-	var realdummy = *dummyptr
-	var ciphertext = realdummy[0].([]byte)
-	var inv_arr_ds = realdummy[1].([]byte)
-	err = userlib.DSVerify(inv_DS_key, ciphertext, inv_arr_ds)
+	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
 	if err != nil {
 		return
 	}
-	var plaintext []byte
-	plaintext, err = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
+	var invite Invitation
+	err = json.Unmarshal(invitation, &invite)
 	if err != nil {
 		return
 	}
-	var inv Invitation
-	var invptr = &inv
-	err = json.Unmarshal(plaintext, invptr)
-	if err != nil {
-		return
-	}
-	// general invite structure
-	new_invite := Invitation{REEncrypt_key: inv.REEncrypt_key, DS_sign_key: inv.DS_sign_key, Decrypt_file_key_RSA: inv.Decrypt_file_key_RSA, File_UUID: inv.File_UUID, Owner: false, Current: recipientUsername}
-	var invite_uuid uuid.UUID
-	invite_uuid = uuid.New()
-	userdata.InviteUUIDs[filename] = append(userdata.InviteUUIDs[filename], invite_uuid)
-	var recipient_enc_key userlib.PKEEncKey
-	recipient_enc_key, ok = userlib.KeystoreGet(string(userlib.Hash(hash)))
+	// pull file from datastore via invitation key
+	var file_id = invite.File_uuid
+	var file_dec_key = invite.Dec_file_key
+	var file_ver_key = invite.Verify_file_key
+	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
 		return
 	}
-	plaintext, err = json.Marshal(new_invite)
+	// hybrid decrypt and verify the file
+	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key,encrypted_file_struct, file_id)
 	if err != nil {
 		return
 	}
-	// encrypt with recipient's public key
-	ciphertext, err = userlib.PKEEnc(recipient_enc_key, plaintext)
-	if err != nil {
-		return
+	var file_struct File_struct
+	json.Unmarshal(file_bytes, &file_struct)
+	// generate random invite uuid
+	new_inv_uuid := uuid.New()
+	Invite := Invitation{File_uuid: file_id, 
+		Dec_file_key: invite.Dec_file_key, 
+		Verify_file_key: invite.Verify_file_key, 
+		User: recipientUsername, 
+		Filetree_uuid: invite.Filetree_uuid, 
+		Sym_filetree_key: invite.Sym_filetree_key, 
+		Sign_filetree_key: invite.Sign_filetree_key, 
+		Verify_filetree_key: invite.Verify_filetree_key,
+		Owner: false,
+		Accepted: false}
+
+	// encrypt and sign invite under recipient's public key from keystore
+	new_inv_bytes, err := json.Marshal(Invite)
+	recipient_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(recipientUsername+"_inv_enc"))))
+	if !ok {
+		return 
 	}
-	// sign with user's ds sign key
-	var signature []byte
-	signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
-	if err != nil {
-		return
-	}
-	array := []interface{}{ciphertext, signature}
-	var arr []byte
-	arr, err = json.Marshal(array)
-	if err != nil {
-		return
-	}
-	userlib.DatastoreSet(invite_uuid, arr)
-	var userdata_plaintext, err6 = json.Marshal(userdata)
-	if err6 != nil {
-		return
-	}
-	// reencrypt and resign user structs after appending to their invitation mapping
-	var userdata_ciphertext = userlib.SymEnc(userdata.Root_key, userlib.RandomBytes((16)), userdata_plaintext)
-	// sign the ciphertext
-	var userdata_signature, err7 = userlib.DSSign(userdata.DS_sign_key, userdata_ciphertext)
-	if err7 != nil {
-		return
-	}
-	user_array := []interface{}{userdata_ciphertext, userdata_signature}
-	var user_array_store, err8 = json.Marshal(user_array)
-	if err8 != nil {
-		return
-	}
-	userlib.DatastoreSet(userdata.User_UUID, user_array_store)
-	// return invitation
-	return invite_uuid, err
+	HybridEncryptThenSign(recipient_key, userdata.Sign_inv_key, new_inv_bytes, new_inv_uuid)
+	return new_inv_uuid, err
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
-	// use the invitationPtr to retrieve the invitation
-	var enc_inv []byte
-	var ok bool
-	var err error
-	enc_inv, ok = userlib.DatastoreGet(invitationPtr)
+	// get invitation from datastore
+	inv_bytes, ok := userlib.DatastoreGet(invitationPtr)
 	if !ok {
 		return nil
 	}
-	// verify and decrypt the invitation
-	var dummyptr *[]interface{}
-	json.Unmarshal(enc_inv, dummyptr)
-	var realdummy = *dummyptr
-	var cipher = realdummy[0].([]byte)
-	var verification_ds = realdummy[1].([]byte)
-	var key userlib.PublicKeyType
-	key, ok = userlib.KeystoreGet(senderUsername + "_DS")
+	// verify the invitation, decrypt with userdata private key 
+	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(senderUsername+"_inv_verify"))))
 	if !ok {
 		return nil
 	}
-	err = userlib.DSVerify(key, cipher, verification_ds)
+	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, inv_bytes, invitationPtr)
 	if err != nil {
 		return nil
 	}
-	var unenc_inv []byte
-	unenc_inv, err = userlib.PKEDec(userdata.Decryption_key_RSA, cipher)
+	// unmarshal the invitation
 	if err != nil {
-		return nil
-	}
-	var inv Invitation
-	var invptr = &inv
-	err = json.Unmarshal(unenc_inv, invptr)
-	if err != nil {
-		return nil
-	}
-	// update the userdata's mappings invitation map
-	userdata.InvitationMap[string(userlib.Hash([]byte(filename)))] = invitationPtr
-	// update the file's user tree
-	var file_uuid = inv.File_UUID
-	var file_dec_key = inv.Decrypt_file_key_RSA
-	var encrypted_file_struct []byte
-	encrypted_file_struct, ok = userlib.DatastoreGet(file_uuid)
-	if ok != true {
-		return nil
-	}
-	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
-	if ok3 != true {
-		return nil
-	}
-	var dummyptr2 *[]interface{}
-	json.Unmarshal(encrypted_file_struct, dummyptr2)
-	var realdummy2 = *dummyptr2
-	var verification_ds2 = realdummy2[1].([]byte)
-	var ciphertext2 = realdummy2[0].([]byte)
-	err = userlib.DSVerify(file_verify_key, ciphertext2, verification_ds2)
-	if err != nil {
-		return nil
-	}
-	var plaintext2 []byte
-	// unencrypt to get the file struct
-	plaintext2, err = userlib.PKEDec(file_dec_key, ciphertext2)
-	if err != nil {
-		return nil
-	}
-	var file_struct File_struct
-	var file_struct_ptr = &file_struct
-	json.Unmarshal(plaintext2, file_struct_ptr)
-	var file_tree = file_struct.File_tree
-
-	// modify file_tree
-	var u = *userdata
-	file_tree.InsertNewUser(senderUsername, u.Username)
-	// reencrypt file
-	var ciphertext_file []byte
-	var plaintext_file []byte
-	plaintext_file, err = json.Marshal(file_struct)
-
-	if err != nil {
-		return nil
-	}
-	ciphertext_file, err = userlib.PKEEnc(inv.REEncrypt_key, plaintext_file)
-	if err != nil {
-		return nil
-	}
-	var signature_file []byte
-	signature_file, err = userlib.DSSign(inv.DS_sign_key, ciphertext_file)
-	if err != nil {
-		return nil
-	}
-	array_file := []interface{}{ciphertext_file, signature_file}
-	var arr_file []byte
-	arr_file, err = json.Marshal(array_file)
-	if err != nil {
-		return nil
-	}
-	userlib.DatastoreSet(file_uuid, arr_file)
-	return nil
-}
-
-func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
-	// get the invitation
-	var ok bool
-	var inv_uuid uuid.UUID
-	var file_hash []byte
-	var inv_contents []byte
-	var dummyptr *[]interface{}
-	// get the file hash, retrieve contents from datastore
-	file_hash = userlib.Hash([]byte(filename))
-	inv_uuid = userdata.InvitationMap[string(file_hash)]
-	inv_contents, ok = userlib.DatastoreGet(inv_uuid)
-	if ok != true {
-		return nil
-	}
-	json.Unmarshal(inv_contents, dummyptr)
-	// unencrypt and verify the invitation
-	var realdummy = *dummyptr
-	var inv_DS_key userlib.PublicKeyType
-	inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
-	if ok != true {
-		return nil
-	}
-	var verification_ds = realdummy[1].([]byte)
-	var ciphertext = realdummy[0].([]byte)
-	var err2 error
-	err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
-	if err2 != nil {
-		return nil
-	}
-	// decrypt the ciphertext, which should be the invitation
-	var plaintext []byte
-	plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
-	if err2 != nil {
 		return nil
 	}
 	var invite Invitation
-	var invptr = &invite
-	err2 = json.Unmarshal(plaintext, invptr)
-	if err2 != nil {
+	err = json.Unmarshal(invitation, &invite)
+	if err != nil {
 		return nil
 	}
-	if invite.Owner == false {
+	// Change the accepted boolean to true
+	invite.Accepted = true
+	// Store the inv_uuid in the recipient’s InvitationMap
+	userdata.InvitationMap[filename]=invitationPtr
+	// get the filetree from datastore
+	filetree_id := invite.Filetree_uuid
+	filetree_bytes, ok := userlib.DatastoreGet(filetree_id)
+	if !ok {
 		return nil
 	}
-	// retrieve the file
-	var file_uuid = invite.File_UUID
-	var file_dec_key = invite.Decrypt_file_key_RSA
-	var encrypted_file_struct, ok2 = userlib.DatastoreGet(file_uuid)
-	if ok2 != true {
+	var filetree Tree
+	json.Unmarshal(filetree_bytes, &filetree)
+	// add user to the tree
+	filetree.InsertNewUser(senderUsername, userdata.Username)
+	// re-encrypt and re-sign with keys in the invitation
+	FileTreeBytes, err := json.Marshal(filetree)
+	if err != nil {
 		return nil
 	}
-	// get verification key
-	var file_verify_key, ok3 = userlib.KeystoreGet(string(userlib.Hash([]byte(filename + "_ds"))))
-	if ok3 != true {
+	cipher := userlib.SymEnc(invite.Sym_filetree_key, userlib.RandomBytes(16), FileTreeBytes)
+	// store it in datastore with key = Filetree_uuid
+	userlib.DatastoreSet(invite.Filetree_uuid, cipher)
+	// Encrypt and sign the invitation struct, and store it in Datastore again
+	enc_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username+"_inv_enc"))))
+	if !ok {
+		return nil
+	} 
+	new_inv_bytes, err := json.Marshal(invite)
+	HybridEncryptThenSign(enc_key, userdata.Sign_inv_key, new_inv_bytes, invitationPtr)
+	return err
+}
+
+func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+	// get Inv_uuid from InvitationMap
+	inv_id := userdata.InvitationMap[filename]
+	// pull the invitation from datastore via Inv_uuid
+	InviteBytes, ok := userlib.DatastoreGet(inv_id)
+	if !ok {
 		return nil
 	}
-	var dummyptr2 *[]interface{}
-	// unmarshal and verify file struct
-	json.Unmarshal(encrypted_file_struct, dummyptr2)
-	var realdummy2 = *dummyptr2
-	var verification_ds2 = realdummy2[1].([]byte)
-	var ciphertext2 = realdummy2[0].([]byte)
-	err2 = userlib.DSVerify(file_verify_key, ciphertext2, verification_ds2)
-	if err2 != nil {
+	// hybrid decrypt and verify the invitation
+	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username+"_inv_verify"))))
+	if !ok {
 		return nil
 	}
-	var plaintext2 []byte
-	// unencrypt to get the file struct
-	plaintext2, err2 = userlib.PKEDec(file_dec_key, ciphertext2)
-	if err2 != nil {
+	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
+	if err != nil {
 		return nil
 	}
+	var invite Invitation
+	err = json.Unmarshal(invitation, &invite)
+	if err != nil {
+		return nil
+	}
+	// verify invitation is owner's
+	if !invite.Owner {
+		return nil
+	} 
+	// load up the file
+	// pull file from datastore via invitation key
+	var file_id = invite.File_uuid
+	var file_dec_key = invite.Dec_file_key
+	var file_ver_key = invite.Verify_file_key
+	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
+	if !ok {
+		return nil
+	}
+	// hybrid decrypt and verify the file
+	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key,encrypted_file_struct, file_id)
 	var file_struct File_struct
-	var file_struct_ptr = &file_struct
-	json.Unmarshal(plaintext2, file_struct_ptr)
-	// remove branch from file tree
-	file_struct.File_tree.RemoveUserBranch(recipientUsername)
+	json.Unmarshal(file_bytes, &file_struct)
+	// get the filetree from invite
+	filetree_id := invite.Filetree_uuid
+	filetree_bytes, ok := userlib.DatastoreGet(filetree_id)
+	if !ok {
+		return nil
+	}
+	var filetree Tree
+	json.Unmarshal(filetree_bytes, &filetree)
+	// Call filetree.cut_branch(user)
+	filetree.RemoveUserBranch(recipientUsername)
+	// Call filetree.createlist() 
+	remainingUsers := filetree.GetKeys()
+	// generate RSA keypair
+	Encryption_key_RSA, Decryption_key_RSA, err := userlib.PKEKeyGen()
+	if err != nil {
+		return nil
+	}
+	
+	// place the encryption key in the user’s FileEncMap 
+	userdata.FileEncMap[filename] = Encryption_key_RSA
+	// place the decryption key (Dec_file_key) in the file’s Invitation.
+	
+	// generate a pair of file digital signature keys
+	DS_signKey, DS_verifyKey, err := userlib.DSKeyGen()
+	// place the sign key in FileSignMap 
+	userdata.FileSignMap[filename] = DS_signKey
+	// place the verification key (Verify_file_key) in the file’s Invitation. 
 
-	// go through the remaining tree, update the invitation private keys
-	var list []string
-	file_struct.File_tree.AddToList(&list)
-	// create the new file
-	FileStruct := File_struct{Contents: file_struct.Contents, Num_bytes: file_struct.Num_bytes, File_tree: file_struct.File_tree}
-	// generate keys encryption/decryption (invitations)
-	var err error
-	var Encryption_key_RSA userlib.PKEEncKey
-	var Decryption_key_RSA userlib.PKEDecKey
-	Encryption_key_RSA, Decryption_key_RSA, err = userlib.PKEKeyGen()
-	var file_enc []byte
-	file_enc = userlib.Hash([]byte(filename + "_enc"))
-	userlib.KeystoreSet(string(file_enc), Encryption_key_RSA)
-	// generate keys digital signatures (invitations)
-	var DS_signKey userlib.DSSignKey
-	var DS_verifyKey userlib.DSVerifyKey
-	DS_signKey, DS_verifyKey, err = userlib.DSKeyGen()
-	var newfileuuid = uuid.New()
-	if err != nil {
-		return nil
-	}
-	userlib.KeystoreSet(string(userlib.Hash([]byte(filename+"_ds"))), DS_verifyKey)
-	var id_list = userdata.InviteUUIDs[filename]
+	// Store file in Datastore
 
-	var ciphertext_file []byte
-	var plaintext_file []byte
-	plaintext_file, err = json.Marshal(FileStruct)
-	if err != nil {
-		return nil
-	}
-	ciphertext_file, err = userlib.PKEEnc(invite.REEncrypt_key, plaintext_file)
-	if err != nil {
-		return nil
-	}
-	var signature_file []byte
-	signature_file, err = userlib.DSSign(invite.DS_sign_key, ciphertext_file)
-	if err != nil {
-		return nil
-	}
-	array_file := []interface{}{ciphertext_file, signature_file}
-	var arr_file []byte
-	arr_file, err = json.Marshal(array_file)
-	if err != nil {
-		return nil
-	}
-	userlib.DatastoreSet(file_uuid, arr_file)
-	// new encryption
-	for _, username := range list {
-		for _, inv_id := range id_list {
-			inv_contents, ok = userlib.DatastoreGet(inv_id)
-			if ok != true {
-				return nil
-			}
-			json.Unmarshal(inv_contents, dummyptr)
-			// unencrypt and verify the invitation
-			var realdummy = *dummyptr
-			var inv_DS_key userlib.PublicKeyType
-			inv_DS_key, ok = userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_DS"))))
-			if ok != true {
-				return nil
-			}
-			var verification_ds = realdummy[1].([]byte)
-			var ciphertext = realdummy[0].([]byte)
-			var err2 error
-			err2 = userlib.DSVerify(inv_DS_key, ciphertext, verification_ds)
-			if err2 != nil {
-				return nil
-			}
-			// decrypt the ciphertext, which should be the invitation
-			var plaintext []byte
-			plaintext, err2 = userlib.PKEDec(userdata.Decryption_key_RSA, ciphertext)
-			if err2 != nil {
-				return nil
-			}
-			var invite Invitation
-			var invptr = &invite
-			err2 = json.Unmarshal(plaintext, invptr)
-			if err2 != nil {
-				return nil
-			}
-			if invite.Current == username {
-				invite.DS_sign_key = DS_signKey
-				invite.Decrypt_file_key_RSA = Decryption_key_RSA
-				invite.File_UUID = newfileuuid
-				invite.REEncrypt_key = Encryption_key_RSA
-				plaintext, err = json.Marshal(invite)
-				if err != nil {
-					return nil
-				}
-				// encrypt with recipient's public key
-				var hash, err = json.Marshal(username)
-				if err != nil {
-					return nil
-				}
-				var rec_key_enc, ok = userlib.KeystoreGet(string(userlib.Hash(hash)))
-				if !ok {
-					return nil
-				}
-				ciphertext, err = userlib.PKEEnc(rec_key_enc, plaintext)
-				if err != nil {
-					return nil
-				}
-				// sign with user's ds sign key
-				var signature []byte
-				hash, err = json.Marshal(username + "_DS")
-				if err != nil {
-					return nil
-				}
-				signature, err = userlib.DSSign(userdata.DS_sign_key, ciphertext)
-				if err != nil {
-					return nil
-				}
-				array := []interface{}{ciphertext, signature}
-				var arr []byte
-				arr, err = json.Marshal(array)
-				if err != nil {
-					return nil
-				}
-				userlib.DatastoreSet(inv_id, arr)
-			} else {
-				continue
-			}
-		}
-	}
+	// Regenerate filetree uuid and filetree keys
+	// Store filetree in Datastore
+	// Delete old file from datastore
+	// Delete old filetree from datastore
+	// Iterate through list of inv_uuids/user 
+	// update invitations by creating new invitations 
+	// map them to previous (same) inv_uuid (encrypt then mac with the user’s PK in keystore)
 
-	return nil
+
+	// new_inv_uuid := uuid.New()
+	// Invite := Invitation{File_uuid: file_id, 
+	// 	Dec_file_key: invite.Dec_file_key, 
+	// 	Verify_file_key: invite.Verify_file_key, 
+	// 	User: recipientUsername, 
+	// 	Filetree_uuid: invite.Filetree_uuid, 
+	// 	Sym_filetree_key: invite.Sym_filetree_key, 
+	// 	Sign_filetree_key: invite.Sign_filetree_key, 
+	// 	Verify_filetree_key: invite.Verify_filetree_key,
+	// 	Owner: false,
+	// 	Accepted: false}
 }
