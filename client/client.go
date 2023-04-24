@@ -800,12 +800,16 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	userlib.DatastoreSet(new_file_id, encrypted_file_struct)
 
 	// place the decryption key (Dec_file_key) in the file’s Invitation.
-	// place the sign key in FileSignMap
+	invite.Dec_file_key = new_Decryption_key_RSA
 	// place the verification key (Verify_file_key) in the file’s Invitation.
-
-	// Store file in Datastore
+	invite.Verify_file_key = new_DS_verify_key
 
 	// Regenerate filetree uuid and filetree keys
+	var new_filetree_id = uuid.New()
+	var password, salt_bytes, new_filetree_sym_key []byte
+	password = userlib.RandomBytes(16)
+	salt_bytes = userlib.RandomBytes(16)
+	new_filetree_sym_key = userlib.Argon2Key(password, salt_bytes, 16)
 	// Store filetree in Datastore
 	// Delete old file from datastore
 	// Delete old filetree from datastore
