@@ -329,6 +329,7 @@ func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey
 	}
 	// Store array in datastore with id
 	userlib.DatastoreSet(id, user_array_store)
+	return
 }
 
 func HybridVerifyThenDecrypt(dec_key userlib.PKEDecKey, verify_key userlib.DSVerifyKey, data []byte, id uuid.UUID) (content []byte, err error) {
@@ -495,8 +496,21 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return
 	}
 	cipher := userlib.SymEnc(sym_key, userlib.RandomBytes(16), FileTreeBytes)
+	// sign filetree
+	var filetree_sig []byte
+	filetree_sig, err = userlib.DSSign(DS_signKey_ft, cipher)
+
+	// create interface for filetree
+	filetree_array := make([]interface{}, 2)
+	filetree_array[0] = cipher
+	filetree_array[1] = filetree_sig
+	// Marshal the array
+	filetree_array_store, err := json.Marshal(filetree_array)
+	if err != nil {
+		return nil
+	}
 	// store it in datastore with key = Filetree_uuid
-	userlib.DatastoreSet(UserTree_uuid, cipher)
+	userlib.DatastoreSet(UserTree_uuid, filetree_array_store)
 	return err
 }
 
@@ -692,10 +706,23 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	userdata.InvitationMap[filename] = invitationPtr
 	// get the filetree from datastore
 	filetree_id := invite.Filetree_uuid
-	filetree_bytes, ok := userlib.DatastoreGet(filetree_id)
+	// Load the data from datastore with id
+	enc_filetree_data, ok := userlib.DatastoreGet(filetree_id)
 	if !ok {
 		return nil
 	}
+	// Unmarshal the array
+	realdummy := make([]interface{}, 2)
+	json.Unmarshal(enc_filetree_data, &realdummy)
+	filetree_ciphertext := realdummy[0].([]byte)
+	filetree_verification := realdummy[1].([]byte)
+	// Verify the signature with verify_key
+	err = userlib.DSVerify(invite.Verify_filetree_key, filetree_ciphertext, filetree_verification)
+	if err != nil {
+		return nil
+	}
+	// Decrypt the encrypted data with the symmetric key
+	filetree_bytes := userlib.SymDec(invite.Sym_filetree_key, filetree_ciphertext)
 	var filetree Tree
 	json.Unmarshal(filetree_bytes, &filetree)
 	// add user to the tree
@@ -796,8 +823,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	// place the verification key in the owner's FileSignMap
 	userdata.FileSignMap[filename] = new_DS_sign_key
 
-	// store file in datastore
-	userlib.DatastoreSet(new_file_id, encrypted_file_struct)
+	// re-encrypt and sign file, store in datastore
+	HybridEncryptThenSign(new_Encryption_key_RSA, new_DS_sign_key, file_bytes, new_file_id)
 
 	// place the decryption key (Dec_file_key) in the file’s Invitation.
 	invite.Dec_file_key = new_Decryption_key_RSA
@@ -810,22 +837,79 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	password = userlib.RandomBytes(16)
 	salt_bytes = userlib.RandomBytes(16)
 	new_filetree_sym_key = userlib.Argon2Key(password, salt_bytes, 16)
+	new_filetree_sign_key, new_filetree_verify_key, err := userlib.DSKeyGen()
+	if err != nil {
+		return nil
+	}
+	// place in invitation
+	invite.Filetree_uuid = new_filetree_id
+	invite.Sym_filetree_key = new_filetree_sym_key
+	invite.Sign_filetree_key = new_filetree_sign_key
+	invite.Verify_filetree_key = new_filetree_verify_key
 	// Store filetree in Datastore
-	// Delete old file from datastore
-	// Delete old filetree from datastore
-	// Iterate through list of inv_uuids/user
-	// update invitations by creating new invitations
-	// map them to previous (same) inv_uuid (encrypt then mac with the user’s PK in keystore)
+	var new_filetree_bytes []byte
+	new_filetree_bytes, err = json.Marshal(filetree)
+	var new_random_iv = userlib.RandomBytes(16)
+	var new_encrypted_filetree = userlib.SymEnc(new_filetree_sym_key, new_random_iv, new_filetree_bytes)
+	if err != nil {
+		return nil
+	}
+	var filetree_sig []byte
+	filetree_sig, err = userlib.DSSign(new_filetree_sign_key, new_encrypted_filetree)
 
-	// new_inv_uuid := uuid.New()
-	// Invite := Invitation{File_uuid: file_id,
-	// 	Dec_file_key: invite.Dec_file_key,
-	// 	Verify_file_key: invite.Verify_file_key,
-	// 	User: recipientUsername,
-	// 	Filetree_uuid: invite.Filetree_uuid,
-	// 	Sym_filetree_key: invite.Sym_filetree_key,
-	// 	Sign_filetree_key: invite.Sign_filetree_key,
-	// 	Verify_filetree_key: invite.Verify_filetree_key,
-	// 	Owner: false,
-	// 	Accepted: false}
+	// create interface for filetree
+	filetree_array := make([]interface{}, 2)
+	filetree_array[0] = new_encrypted_filetree
+	filetree_array[1] = filetree_sig
+	// Marshal the array
+	filetree_array_store, err := json.Marshal(filetree_array)
+	if err != nil {
+		return nil
+	}
+	// store it in datastore with key = Filetree_uuid
+	userlib.DatastoreSet(new_filetree_id, filetree_array_store)
+
+	// Delete old file from datastore
+	userlib.DatastoreDelete(file_id)
+	// Delete old filetree from datastore
+	userlib.DatastoreDelete(filetree_id)
+
+	// store current invitation in datastore
+	new_inv_bytes, err := json.Marshal(invite)
+	curr_inv_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_inv_enc"))))
+	if !ok {
+		return nil
+	}
+	// NOTE!!!! not sure if userdata.Sign_inv_key is correct
+	// POTENTIAL SOURCE OF ERROR
+	HybridEncryptThenSign(curr_inv_key, userdata.Sign_inv_key, new_inv_bytes, inv_id)
+	// Iterate through list of inv_uuids/user
+	for i := 0; i < len(remaining_users); i++ {
+		// update invitations by creating new invitations
+		// map them to previous (same) inv_uuid (encrypt then mac with the user’s PK in keystore)
+		var user_string = remaining_users[i]
+		var invitation_id = reminaing_ids[i]
+		new_invite := Invitation{File_uuid: file_id,
+			Dec_file_key:        invite.Dec_file_key,
+			Verify_file_key:     invite.Verify_file_key,
+			User:                user_string,
+			Filetree_uuid:       new_filetree_id,
+			Sym_filetree_key:    new_filetree_sym_key,
+			Sign_filetree_key:   new_filetree_sign_key,
+			Verify_filetree_key: new_filetree_verify_key,
+			Owner:               false,
+			Accepted:            true}
+		new_invite_bytes, err := json.Marshal(new_invite)
+		if err != nil {
+			return nil
+		}
+		// idk what keys to use, also issue with current invitation keys
+		HybridEncryptThenSign(idk, idk, new_invite_bytes, invitation_id)
+	}
+	return nil
 }
+
+// to do:
+// fix revoke inv, particularly the keys for invites, review code, ensure trees work properly
+// write tests for flags
+// take trenbolone acetate.
