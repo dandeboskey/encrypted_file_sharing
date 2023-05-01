@@ -422,16 +422,6 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return
 	}
-
-	// store invitation struct after hybrid encryption and signing
-	InviteBytes, err := json.Marshal(Invite)
-	if err != nil {
-		return
-	}
-	err = HybridEncryptThenSign(Encryption_key_RSA, DS_signKey, InviteBytes, inv_id)
-	if err != nil {
-		return
-	}
 	return err
 }
 
@@ -445,8 +435,8 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		return nil
 	}
 	// hybrid verify and decrypt the accesspoint
-	AXS_decKey = userdata.AccessPointDecryptMap[filename]
-	AXS_verifyKey = userdata.AccessPointVerifyMap[filename]
+	AXS_decKey := userdata.AccessPointDecryptMap[filename]
+	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
 		return nil
@@ -456,31 +446,31 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	if err != nil {
 		return nil
 	}
-	
+
 	// pull file from datastore
 	file_id := AXS.File_uuid
 	file_sym_key := AXS.Sym_file_key
 	file_sign_key := AXS.Sign_file_key
 	file_verify_key := AXS.Verify_file_key
-	encrypted_file_struct, ok := userlib.DataStoreGet(file_id)
+	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
 		return nil
 	}
-	// verify and decrypt user struct
+	// verify and decrypt file struct
 	var realdummy = make([]interface{}, 2)
-	json.Unmarshal(encrpted_file_struct, &realdummy)
+	json.Unmarshal(encrypted_file_struct, &realdummy)
 	var verification_ds = realdummy[1].([]byte)
 	var cipher = realdummy[0].([]byte)
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
-		return
+		return nil
 	}
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
 	var file_struct File_struct
-	// set userdataptr to the unencrypted and verified user struct
+	// set file_struct to the unencrypted and verified file struct
 	err = json.Unmarshal(plaintext, &file_struct)
 	if err != nil {
-		return
+		return nil
 	}
 
 	// append content to file struct contents
@@ -490,26 +480,22 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	*tail_ptr.Next = new_node
 	file_list.Tail = &new_node
 	file_struct.Num_bytes += len(content)
-	new_file_bytes, err := json.Marshal(file_struct)
-	if err != nil {
-		return nil
-	}
 	// encrypt and sign file
 	FileBytes, err := json.Marshal(file_struct)
 	if err != nil {
-		return
+		return nil
 	}
 	var filedata_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), FileBytes)
 	filedata_signature, err := userlib.DSSign(file_sign_key, filedata_cipher)
 	if err != nil {
-		return
+		return nil
 	}
 	file_array := make([]interface{}, 2)
 	file_array[0] = filedata_cipher
 	file_array[1] = filedata_signature
 	file_array_store, err := json.Marshal(file_array)
 	if err != nil {
-		return
+		return nil
 	}
 	userlib.DatastoreSet(file_id, file_array_store)
 	// put in datastore
@@ -517,41 +503,54 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
-	// get Inv_uuid from InvitationMap
-	inv_id := userdata.InvitationMap[filename]
-	// pull the invitation from datastore via Inv_uuid
-	InviteBytes, ok := userlib.DatastoreGet(inv_id)
+	// get axs_id from UserAccessPointMap
+	axs_id := userdata.UserAccessPointMap[filename]
+
+	// pull the accesspoint from datastore
+	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
 		return
 	}
-	// hybrid decrypt and verify the invitation
-	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_inv_verify"))))
-	if !ok {
-		return
-	}
-	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
+	// hybrid verify and decrypt the accesspoint
+	AXS_decKey := userdata.AccessPointDecryptMap[filename]
+	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
 		return
 	}
-	var invite Invitation
-	err = json.Unmarshal(invitation, &invite)
+	var AXS AccessPoint
+	err = json.Unmarshal(axs, &AXS)
 	if err != nil {
 		return
 	}
-	// pull file from datastore via invitation key
-	var file_id = invite.File_uuid
-	var file_dec_key = invite.Dec_file_key
-	var file_ver_key = invite.Verify_file_key
+
+	// pull file from datastore
+	file_id := AXS.File_uuid
+	file_sym_key := AXS.Sym_file_key
+	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
 		return
 	}
-	// hybrid decrypt and verify the file
-	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key, encrypted_file_struct, file_id)
+	// verify and decrypt file struct
+	var realdummy = make([]interface{}, 2)
+	json.Unmarshal(encrypted_file_struct, &realdummy)
+	var verification_ds = realdummy[1].([]byte)
+	var cipher = realdummy[0].([]byte)
+	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
+	if err != nil {
+		return
+	}
+	var plaintext = userlib.SymDec(file_sym_key, cipher)
 	var file_struct File_struct
-	json.Unmarshal(file_bytes, &file_struct)
+	// set file_struct to the unencrypted and verified file struct
+	err = json.Unmarshal(plaintext, &file_struct)
+	if err != nil {
+		return
+	}
+
 	// iterate through contents, return contents as a list
-	var file_list = file_struct.Contents
+	var file_list = file_struct.File_LL
 	var head = file_list.Head
 	// get all of the contents
 	for curr := head; curr != nil; curr = curr.Next {
@@ -560,70 +559,132 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	return content, err
 }
 
-func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
-		// create invitation struct for recipient
-		Invite := Invitation{AXS_uuid: axs_id,
-			Dec_AXS_key:    AXS_RSA_decKey,
-			Verify_AXS_key: AXS_DS_verifyKey}
-	
-	invitationPtr uuid.UUID, err error) {
-	// get Inv_uuid from InvitationMap
-	inv_id := userdata.InvitationMap[filename]
-	// pull the invitation from datastore via Inv_uuid
-	InviteBytes, ok := userlib.DatastoreGet(inv_id)
-	if !ok {
-		return
-	}
-	// hybrid decrypt and verify the invitation
-	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_inv_verify"))))
-	if !ok {
-		return
-	}
-	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
-	if err != nil {
-		return
-	}
-	var invite Invitation
-	err = json.Unmarshal(invitation, &invite)
-	if err != nil {
-		return
-	}
-	// pull file from datastore via invitation key
-	var file_id = invite.File_uuid
-	var file_dec_key = invite.Dec_file_key
-	var file_ver_key = invite.Verify_file_key
-	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
-	if !ok {
-		return
-	}
-	// hybrid decrypt and verify the file
-	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key, encrypted_file_struct, file_id)
-	if err != nil {
-		return
-	}
-	var file_struct File_struct
-	json.Unmarshal(file_bytes, &file_struct)
-	// generate random invite uuid
-	new_inv_uuid := uuid.New()
-	Invite := Invitation{File_uuid: file_id,
-		Dec_file_key:        invite.Dec_file_key,
-		Verify_file_key:     invite.Verify_file_key,
-		User:                recipientUsername,
-		Filetree_uuid:       invite.Filetree_uuid,
-		Sym_filetree_key:    invite.Sym_filetree_key,
-		Sign_filetree_key:   invite.Sign_filetree_key,
-		Verify_filetree_key: invite.Verify_filetree_key,
-		Owner:               false,
-		Accepted:            false}
+func (userdata *User) CreateInvitation(filename string, recipientUsername string) {
+	// create random inv_id
+	inv_id := uuid.New()
 
-	// encrypt and sign invite under recipient's public key from keystore
-	new_inv_bytes, err := json.Marshal(Invite)
-	recipient_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(recipientUsername + "_inv_enc"))))
+	// check if owner is calling the function to do this, check their access point and compare owner string
+	// get axs_id from UserAccessPointMap
+	axs_id := userdata.UserAccessPointMap[filename]
+
+	// pull the accesspoint from datastore
+	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
 		return
 	}
-	HybridEncryptThenSign(recipient_key, userdata.Sign_inv_key, new_inv_bytes, new_inv_uuid)
-	return new_inv_uuid, err
+	// hybrid verify and decrypt the accesspoint
+	AXS_decKey := userdata.AccessPointDecryptMap[filename]
+	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
+	if err != nil {
+		return
+	}
+	var AXS AccessPoint
+	err = json.Unmarshal(axs, &AXS)
+	if err != nil {
+		return
+	}
+	// if non-owner calls function, share current accesspoint info in invitation.
+	if AXS.Owner != userdata.Username {
+		Invite := Invitation{AXS_uuid: axs_id,
+			Dec_AXS_key:    AXS_decKey,
+			Verify_AXS_key: AXS_verifyKey}
+		inv_enc_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(recipientUsername + "_inv_enc"))))
+		if !ok {
+			return
+		}
+		InviteBytes, err := json.Marshal(Invite)
+		if err != nil {
+			return
+		}
+		err = HybridEncryptThenSign(inv_enc_key, userdata.Sign_inv_key, InviteBytes, inv_id)
+		if err != nil {
+			return
+		}
+	}
+	// if owner calls function, have to create new accesspoint
+	newAXS_id := uuid.New()
+	newAXS := AccessPoint{
+		User:            recipientUsername,
+		Owner:           userdata.Username,
+		File_uuid:       AXS.File_uuid,
+		Sym_file_key:    AXS.Sym_file_key,
+		Verify_file_key: AXS.Verify_file_key,
+		Sign_file_key:   AXS.Sign_file_key,
+	}
+	// generate new RSA enc and DS keys for new AXS
+	newAXS_RSA_encKey, newAXS_RSA_decKey, err := userlib.PKEKeyGen()
+	if err != nil {
+		return
+	}
+	// generate DS pair for accesspoint
+	newAXS_DS_signKey, newAXS_DS_verifyKey, err := userlib.DSKeyGen()
+	if err != nil {
+		return
+	}
+	// store info in owner's maps (id and the 4 keys)
+	userdata.UserAccessPointMap[filename] = newAXS_id
+	userdata.AccessPointEncryptMap[filename] = newAXS_RSA_encKey
+	userdata.AccessPointDecryptMap[filename] = newAXS_RSA_decKey
+	userdata.AccessPointSignMap[filename] = newAXS_DS_signKey
+	userdata.AccessPointVerifyMap[filename] = newAXS_DS_verifyKey
+
+	AXS_list := userdata.SharedAccessPointMap[filename]
+	AXS_list = append(AXS_list, newAXS_id)
+	userdata.SharedAccessPointMap[filename] = AXS_list
+
+	// encrypt, sign, and store newAXS in Datastore
+	newAXSBytes, err := json.Marshal(newAXS)
+	if err != nil {
+		return
+	}
+	err = HybridEncryptThenSign(newAXS_RSA_encKey, newAXS_DS_signKey, newAXSBytes, newAXS_id)
+	if err != nil {
+		return
+	}
+
+	// create invitation for this new accesspoint
+	Invite := Invitation{AXS_uuid: newAXS_id,
+		Dec_AXS_key:    newAXS_RSA_decKey,
+		Verify_AXS_key: newAXS_DS_verifyKey}
+
+	// encrpt, sign, and store Invite in Datastore
+	inv_enc_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(recipientUsername + "_inv_enc"))))
+	if !ok {
+		return
+	}
+	InviteBytes, err := json.Marshal(Invite)
+	if err != nil {
+		return
+	}
+	err = HybridEncryptThenSign(inv_enc_key, userdata.Sign_inv_key, InviteBytes, inv_id)
+	if err != nil {
+		return
+	}
+	// re-store user struct
+	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
+	if err != nil {
+		return
+	}
+	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
+	userdata_bytes, err := json.Marshal(userdata)
+	if err != nil {
+		return
+	}
+	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
+	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
+	if err != nil {
+		return
+	}
+	user_array := make([]interface{}, 2)
+	user_array[0] = userdata_cipher
+	user_array[1] = userdata_signature
+	user_array_store, err := json.Marshal(user_array)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
+	return
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
@@ -650,216 +711,37 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	if err != nil {
 		return nil
 	}
-	// Change the accepted boolean to true
-	invite.Accepted = true
-	// Store the inv_uuid in the recipient’s InvitationMap
-	userdata.InvitationMap[filename] = invitationPtr
-	// get the filetree from datastore
-	filetree_id := invite.Filetree_uuid
-	// Load the data from datastore with id
-	enc_filetree_data, ok := userlib.DatastoreGet(filetree_id)
-	if !ok {
-		return nil
-	}
-	// Unmarshal the array
-	realdummy := make([]interface{}, 2)
-	json.Unmarshal(enc_filetree_data, &realdummy)
-	filetree_ciphertext := realdummy[0].([]byte)
-	filetree_verification := realdummy[1].([]byte)
-	// Verify the signature with verify_key
-	err = userlib.DSVerify(invite.Verify_filetree_key, filetree_ciphertext, filetree_verification)
+	// store invitation data in user's maps
+	userdata.UserAccessPointMap[filename] = invite.AXS_uuid
+	userdata.AccessPointDecryptMap[filename] = invite.Dec_AXS_key
+	userdata.AccessPointVerifyMap[filename] = invite.Verify_AXS_key
+	// re-encrypt user struct with sym key, re-sign user struct with new DS pair, and overwrite verification key in keystore
+	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
 	if err != nil {
 		return nil
 	}
-	// Decrypt the encrypted data with the symmetric key
-	filetree_bytes := userlib.SymDec(invite.Sym_filetree_key, filetree_ciphertext)
-	var filetree Tree
-	json.Unmarshal(filetree_bytes, &filetree)
-	// add user to the tree
-	filetree.InsertNewUser(senderUsername, userdata.Username, invitationPtr)
-	// re-encrypt and re-sign with keys in the invitation
-	FileTreeBytes, err := json.Marshal(filetree)
+	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
+	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
 		return nil
 	}
-	cipher := userlib.SymEnc(invite.Sym_filetree_key, userlib.RandomBytes(16), FileTreeBytes)
-	// store it in datastore with key = Filetree_uuid
-	userlib.DatastoreSet(invite.Filetree_uuid, cipher)
-	// Encrypt and sign the invitation struct, and store it in Datastore again
-	enc_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_inv_enc"))))
-	if !ok {
+	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
+	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
+	if err != nil {
 		return nil
 	}
-	new_inv_bytes, err := json.Marshal(invite)
-	HybridEncryptThenSign(enc_key, userdata.Sign_inv_key, new_inv_bytes, invitationPtr)
+	user_array := make([]interface{}, 2)
+	user_array[0] = userdata_cipher
+	user_array[1] = userdata_signature
+	user_array_store, err := json.Marshal(user_array)
+	if err != nil {
+		return nil
+	}
+	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
 	return err
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
-	// get Inv_uuid from InvitationMap
-	inv_id := userdata.InvitationMap[filename]
-	// pull the invitation from datastore via Inv_uuid
-	InviteBytes, ok := userlib.DatastoreGet(inv_id)
-	if !ok {
-		return nil
-	}
-	// hybrid decrypt and verify the invitation
-	VerifyKey, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_inv_verify"))))
-	if !ok {
-		return nil
-	}
-	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, InviteBytes, inv_id)
-	if err != nil {
-		return nil
-	}
-	var invite Invitation
-	err = json.Unmarshal(invitation, &invite)
-	if err != nil {
-		return nil
-	}
-	// verify invitation is owner's
-	if !invite.Owner {
-		return nil
-	}
 
-	// get the filetree from invite
-	filetree_id := invite.Filetree_uuid
-	filetree_bytes, ok := userlib.DatastoreGet(filetree_id)
-	if !ok {
-		return nil
-	}
-	var filetree Tree
-	json.Unmarshal(filetree_bytes, &filetree)
-	// Call filetree.cut_branch(user)
-	filetree.CutBranch(recipientUsername)
-	// Call filetree.createlist()
-	var remaining_users []string
-	var reminaing_ids []uuid.UUID
-	filetree.AddToList(&remaining_users, &reminaing_ids, true)
-	filetree.AddToList(&remaining_users, &reminaing_ids, false)
-
-	// load up the file
-	// pull file from datastore via invitation key
-	var file_id = invite.File_uuid
-	var file_dec_key = invite.Dec_file_key
-	var file_ver_key = invite.Verify_file_key
-	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
-	if !ok {
-		return nil
-	}
-	// hybrid decrypt and verify the file
-	file_bytes, err := HybridVerifyThenDecrypt(file_dec_key, file_ver_key, encrypted_file_struct, file_id)
-	var file_struct File_struct
-	json.Unmarshal(file_bytes, &file_struct)
-
-	// regenerate file id
-	var new_file_id = uuid.New()
-
-	// generate new file encryption keys (RSA keypair)
-	new_Encryption_key_RSA, new_Decryption_key_RSA, err := userlib.PKEKeyGen()
-	if err != nil {
-		return nil
-	}
-
-	// generate new file signing keys (DS keypair)
-	new_DS_sign_key, new_DS_verify_key, err := userlib.DSKeyGen()
-	if err == nil {
-		return nil
-	}
-
-	// place the encryption key in the owner's FileEncMap
-	userdata.FileEncMap[filename] = new_Encryption_key_RSA
-
-	// place the verification key in the owner's FileSignMap
-	userdata.FileSignMap[filename] = new_DS_sign_key
-
-	// re-encrypt and sign file, store in datastore
-	HybridEncryptThenSign(new_Encryption_key_RSA, new_DS_sign_key, file_bytes, new_file_id)
-
-	// place the decryption key (Dec_file_key) in the file’s Invitation.
-	invite.Dec_file_key = new_Decryption_key_RSA
-	// place the verification key (Verify_file_key) in the file’s Invitation.
-	invite.Verify_file_key = new_DS_verify_key
-
-	// Regenerate filetree uuid and filetree keys
-	var new_filetree_id = uuid.New()
-	var password, salt_bytes, new_filetree_sym_key []byte
-	password = userlib.RandomBytes(16)
-	salt_bytes = userlib.RandomBytes(16)
-	new_filetree_sym_key = userlib.Argon2Key(password, salt_bytes, 16)
-	new_filetree_sign_key, new_filetree_verify_key, err := userlib.DSKeyGen()
-	if err != nil {
-		return nil
-	}
-	// place in invitation
-	invite.Filetree_uuid = new_filetree_id
-	invite.Sym_filetree_key = new_filetree_sym_key
-	invite.Sign_filetree_key = new_filetree_sign_key
-	invite.Verify_filetree_key = new_filetree_verify_key
-	// Store filetree in Datastore
-	var new_filetree_bytes []byte
-	new_filetree_bytes, err = json.Marshal(filetree)
-	var new_random_iv = userlib.RandomBytes(16)
-	var new_encrypted_filetree = userlib.SymEnc(new_filetree_sym_key, new_random_iv, new_filetree_bytes)
-	if err != nil {
-		return nil
-	}
-	var filetree_sig []byte
-	filetree_sig, err = userlib.DSSign(new_filetree_sign_key, new_encrypted_filetree)
-
-	// create interface for filetree
-	filetree_array := make([]interface{}, 2)
-	filetree_array[0] = new_encrypted_filetree
-	filetree_array[1] = filetree_sig
-	// Marshal the array
-	filetree_array_store, err := json.Marshal(filetree_array)
-	if err != nil {
-		return nil
-	}
-	// store it in datastore with key = Filetree_uuid
-	userlib.DatastoreSet(new_filetree_id, filetree_array_store)
-
-	// Delete old file from datastore
-	userlib.DatastoreDelete(file_id)
-	// Delete old filetree from datastore
-	userlib.DatastoreDelete(filetree_id)
-
-	// store current invitation in datastore
-	new_inv_bytes, err := json.Marshal(invite)
-	curr_inv_key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(userdata.Username + "_inv_enc"))))
-	if !ok {
-		return nil
-	}
-	// NOTE!!!! not sure if userdata.Sign_inv_key is correct
-	// POTENTIAL SOURCE OF ERROR
-	HybridEncryptThenSign(curr_inv_key, userdata.Sign_inv_key, new_inv_bytes, inv_id)
-	// Iterate through list of inv_uuids/user
-	for i := 0; i < len(remaining_users); i++ {
-		// update invitations by creating new invitations
-		// map them to previous (same) inv_uuid (encrypt then mac with the user’s PK in keystore)
-		var user_string = remaining_users[i]
-		var invitation_id = reminaing_ids[i]
-		new_invite := Invitation{File_uuid: file_id,
-			Dec_file_key:        invite.Dec_file_key,
-			Verify_file_key:     invite.Verify_file_key,
-			User:                user_string,
-			Filetree_uuid:       new_filetree_id,
-			Sym_filetree_key:    new_filetree_sym_key,
-			Sign_filetree_key:   new_filetree_sign_key,
-			Verify_filetree_key: new_filetree_verify_key,
-			Owner:               false,
-			Accepted:            true}
-		new_invite_bytes, err := json.Marshal(new_invite)
-		if err != nil {
-			return nil
-		}
-		// idk what keys to use, also issue with current invitation keys
-		HybridEncryptThenSign(idk, idk, new_invite_bytes, invitation_id)
-	}
 	return nil
 }
-
-// to do:
-// fix revoke inv, particularly the keys for invites, review code, ensure trees work properly
-// write tests for flags
-// take trenbolone acetate.
