@@ -742,6 +742,118 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+	// Load their access point and check that they’re the owner
+	axs_id := userdata.UserAccessPointMap[filename]
+	AXSBytes, ok := userlib.DatastoreGet(axs_id)
+	if !ok {
+		return nil
+	}
+	AXS_decKey := userdata.AccessPointDecryptMap[filename]
+	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
+	if err != nil {
+		return nil
+	}
+	var AXS AccessPoint
+	err = json.Unmarshal(axs, &AXS)
+	if err != nil {
+		return nil
+	}
+	if AXS.Owner != userdata.Username {
+		return nil
+	}
+	// Go to the user that you’re trying to revoke and get their access point from the map
+	access_point_ids := userdata.SharedAccessPointMap[filename]
+	for i, val := range access_point_ids {
+		cur_axs_id := val
+		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
+		if !ok {
+			return nil
+		}
+		cur_AXS_decKey := userdata.AccessPointDecryptMap[filename]
+		cur_AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
+		if err != nil {
+			return nil
+		}
+		var cur_AXS AccessPoint
+		err = json.Unmarshal(cur_axs, &cur_AXS)
+		if err != nil {
+			return nil
+		}
+		// Remoove accesspoint from shared map list and delete the access point from datastore
+		if cur_AXS.User == recipientUsername {
+			access_point_ids = append(access_point_ids[:i], access_point_ids[i+1:]...)
+			userlib.DatastoreDelete(cur_axs_id)
+		}
+	}
+	userdata.SharedAccessPointMap[filename] = access_point_ids
 
+	// 	generate new file id, decryption, and verification keys, re-encrypt re-sign and store file
+	file_id := AXS.File_uuid
+	file_sym_key := AXS.Sym_file_key
+	file_verify_key := AXS.Verify_file_key
+	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
+	if !ok {
+		return nil
+	}
+	// verify and decrypt file struct
+	var realdummy = make([]interface{}, 2)
+	json.Unmarshal(encrypted_file_struct, &realdummy)
+	var verification_ds = realdummy[1].([]byte)
+	var cipher = realdummy[0].([]byte)
+	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
+	if err != nil {
+		return nil
+	}
+	var plaintext = userlib.SymDec(file_sym_key, cipher)
+	var file_struct File_struct
+	// set file_struct to the unencrypted and verified file struct
+	err = json.Unmarshal(plaintext, &file_struct)
+	if err != nil {
+		return nil
+	}
+	random_bytes := userlib.RandomBytes(16)
+	salt_bytes := userlib.RandomBytes(16)
+	new_file_symKey := userlib.Argon2Key(random_bytes, salt_bytes, 16)
+	// generate DS pair for file
+	new_file_signKey, new_file_verifyKey, err := userlib.DSKeyGen()
+	if err != nil {
+		return nil
+	}
+	new_file_id := uuid.New()
+	FileBytes, err := json.Marshal(file_struct)
+	if err != nil {
+		return nil
+	}
+	var filedata_cipher = userlib.SymEnc(new_file_symKey, userlib.RandomBytes(16), FileBytes)
+	filedata_signature, err := userlib.DSSign(new_file_signKey, filedata_cipher)
+	if err != nil {
+		return nil
+	}
+	file_array := make([]interface{}, 2)
+	file_array[0] = filedata_cipher
+	file_array[1] = filedata_signature
+	file_array_store, err := json.Marshal(file_array)
+	if err != nil {
+		return nil
+	}
+	userlib.DatastoreSet(new_file_id, file_array_store)
+	//  update owner's access point, re-encrypt re-sign and store
+	newAXS_id := uuid.New()
+	newAXS := AccessPoint{
+		User:            userdata.Username,
+		Owner:           userdata.Username,
+		File_uuid:       new_file_id,
+		Sym_file_key:    new_file_symKey,
+		Verify_file_key: new_file_verifyKey,
+		Sign_file_key:   new_file_verifyKey,
+	}
+	userdata.UserAccessPointMap[filename] = newAXS_id
+	HybridEncryptThenSign()
+
+	//  update remaining access points, re-encrypt re-sign and store
+
+	// 	re-encrypt re-sign and store owner struct (map was modified)
 	return nil
 }
