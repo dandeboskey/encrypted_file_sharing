@@ -96,9 +96,9 @@ func someUsefulThings() {
 }
 
 type HybridData struct {
-    Ciphertext      []byte
-    Verification    []byte
-    EncryptedSymKey []byte
+	Ciphertext      []byte
+	Verification    []byte
+	EncryptedSymKey []byte
 }
 
 func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey, data []byte, id uuid.UUID) (err error) {
@@ -120,10 +120,11 @@ func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey
 		return err
 	}
 	// Create an array with (encrypted data, signature, encrypted symmetric key)
-	user_array := make([]interface{}, 3)
-	user_array[0] = ciphertext
-	user_array[1] = signed
-	user_array[2] = enc_sym_key
+	user_array := HybridData{
+		Ciphertext:      ciphertext,
+		Verification:    signed,
+		EncryptedSymKey: enc_sym_key,
+	}
 	// Marshal the array
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
@@ -137,22 +138,21 @@ func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey
 func HybridVerifyThenDecrypt(dec_key userlib.PKEDecKey, verify_key userlib.DSVerifyKey, data []byte, id uuid.UUID) (content []byte, err error) {
 	// Load the data from datastore with id
 	enc_data, ok := userlib.DatastoreGet(id)
-    if !ok {
-        return
-    }
-    // Unmarshal the data
-    var realData HybridData
-    err = json.Unmarshal(enc_data, &realData)
-    if err != nil {
-        return
-    }
-    ciphertext := realData.Ciphertext
-    verification := realData.Verification
-    encrypted_sym_key := realData.EncryptedSymKey
+	if !ok {
+		return
+	}
+	// Unmarshal the data
+	var realData HybridData
+	err = json.Unmarshal(enc_data, &realData)
+	if err != nil {
+		return
+	}
+	ciphertext := realData.Ciphertext
+	verification := realData.Verification
+	encrypted_sym_key := realData.EncryptedSymKey
 	// Verify the signature with verify_key
 	err = userlib.DSVerify(verify_key, ciphertext, verification)
 	if err != nil {
-		print("verification err on hybrid verify and decrypt")
 		return
 	}
 	// Decrypt symmetric key (in array) with dec_key
@@ -216,8 +216,13 @@ type User struct {
 }
 
 type UserData struct {
-    UserdataCipher  []byte
-    UserdataSignature []byte
+	UserdataCipher    []byte
+	UserdataSignature []byte
+}
+
+type FileData struct {
+	FiledataCipher    []byte
+	FiledataSignature []byte
 }
 
 // You can add other attributes here if you want! But note that in order for attributes to
@@ -257,7 +262,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	// put verification key in keystore: hash(username + “_user_verify”):Verify_user_key
 	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_user_verify"))), DS_verify_key)
-	
+
 	// generate RSA key pair for encrypting and decrypting invitations
 	var Enc_inv_key userlib.PKEEncKey
 	Enc_inv_key, userdata.Dec_inv_key, err = userlib.PKEKeyGen()
@@ -289,10 +294,10 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return
 	}
-	user_array := make([]interface{}, 2)
-	user_array[0] = userdata_cipher
-	user_array[1] = userdata_signature
-	print(userdata_signature)
+	user_array := UserData{
+		UserdataCipher:    userdata_cipher,
+		UserdataSignature: userdata_signature,
+	}
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
 		return
@@ -302,63 +307,60 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
-    // generate sym_user_key for user
-    var password_bytes, salt_bytes []byte
-    password_bytes, err = json.Marshal(password)
-    if err != nil {
-        return
-    }
-    salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
-    if err != nil {
-        return
-    }
-    // generate root key
-    sym_user_key := userlib.Argon2Key(password_bytes, salt_bytes, 16)
-    // get the user uuid
-    user_id, err := uuid.FromBytes(sym_user_key)
-    if err != nil {
-        return
-    }
-    userBytes, ok := userlib.DatastoreGet(user_id)
-    // verify that user exists in datastore
-    if !ok {
-        return
-    }
-    // pull encrypted & signed user struct from datastore
-    var realData []interface{}
-    err = json.Unmarshal(userBytes, &realData)
-    if err != nil {
-        return
-    }
-    key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(username + "_user_verify"))))
-    if !ok {
-        return
-    }
-    // verify and decrypt user struct
-    verification_ds, ok := realData[1].([]byte)
+	// generate sym_user_key for user
+	var password_bytes, salt_bytes []byte
+	password_bytes, err = json.Marshal(password)
+	if err != nil {
+		return
+	}
+	salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
+	if err != nil {
+		return
+	}
+	// generate root key
+	sym_user_key := userlib.Argon2Key(password_bytes, salt_bytes, 16)
+	// get the user uuid
+	user_id, err := uuid.FromBytes(sym_user_key)
+	if err != nil {
+		return
+	}
+	userBytes, ok := userlib.DatastoreGet(user_id)
+	// verify that user exists in datastore
+	if !ok {
+		return
+	}
+	// pull encrypted & signed user struct from datastore
+	var realData UserData
+	err = json.Unmarshal(userBytes, &realData)
+	if err != nil {
+		return
+	}
+	key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(username + "_user_verify"))))
+	if !ok {
+		return
+	}
+	// verify and decrypt user struct
+	verification_ds := realData.UserdataSignature
 	if !ok {
 		return nil, fmt.Errorf("failed to convert verification_ds to []byte")
 	}
-
-	cipher, ok := realData[0].([]byte)
+	cipher := realData.UserdataCipher
 	if !ok {
 		return nil, fmt.Errorf("failed to convert cipher to []byte")
 	}
-	print(verification_ds)
 
-    err = userlib.DSVerify(key, cipher, verification_ds)
-    if err != nil {
-        print("verification err on verifying the user")
-        return
-    }
-    var plaintext = userlib.SymDec(sym_user_key, cipher)
-    // set userdataptr to the unencrypted and verified user struct
-    userdataptr = &User{}
-    err = json.Unmarshal(plaintext, userdataptr)
-    if err != nil {
-        return
-    }
-    return userdataptr, err
+	err = userlib.DSVerify(key, cipher, verification_ds)
+	if err != nil {
+		return
+	}
+	var plaintext = userlib.SymDec(sym_user_key, cipher)
+	// set userdataptr to the unencrypted and verified user struct
+	userdataptr = &User{}
+	err = json.Unmarshal(plaintext, userdataptr)
+	if err != nil {
+		return
+	}
+	return userdataptr, err
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
@@ -431,9 +433,10 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return
 	}
-	file_array := make([]interface{}, 2)
-	file_array[0] = filedata_cipher
-	file_array[1] = filedata_signature
+	file_array := FileData{
+		FiledataCipher:    filedata_cipher,
+		FiledataSignature: filedata_signature,
+	}
 	file_array_store, err := json.Marshal(file_array)
 	if err != nil {
 		return
@@ -484,13 +487,12 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		return err
 	}
 	// verify and decrypt file struct
-	var realdummy = make([]interface{}, 2)
-	json.Unmarshal(encrypted_file_struct, &realdummy)
-	var verification_ds = realdummy[1].([]byte)
-	var cipher = realdummy[0].([]byte)
+	var RealData FileData
+	json.Unmarshal(encrypted_file_struct, &RealData)
+	var verification_ds = RealData.FiledataSignature
+	var cipher = RealData.FiledataCipher
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
-		print("verification err on file append")
 		return err
 	}
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
@@ -518,9 +520,10 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	if err != nil {
 		return err
 	}
-	file_array := make([]interface{}, 2)
-	file_array[0] = filedata_cipher
-	file_array[1] = filedata_signature
+	file_array := FileData{
+		FiledataCipher:    filedata_cipher,
+		FiledataSignature: filedata_signature,
+	}
 	file_array_store, err := json.Marshal(file_array)
 	if err != nil {
 		return err
@@ -561,13 +564,12 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return
 	}
 	// verify and decrypt file struct
-	var realdummy = make([]interface{}, 2)
-	json.Unmarshal(encrypted_file_struct, &realdummy)
-	var verification_ds = realdummy[1].([]byte)
-	var cipher = realdummy[0].([]byte)
+	var RealData FileData
+	json.Unmarshal(encrypted_file_struct, &RealData)
+	var verification_ds = RealData.FiledataSignature
+	var cipher = RealData.FiledataCipher
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
-		print("verification error on load file")
 		return
 	}
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
@@ -685,7 +687,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	}
 	InviteBytes, err := json.Marshal(Invite)
 	if err != nil {
-		return 
+		return
 	}
 	err = HybridEncryptThenSign(inv_enc_key, userdata.Sign_inv_key, InviteBytes, inv_id)
 	if err != nil {
@@ -694,24 +696,25 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	// re-store user struct
 	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
 	if err != nil {
-		return 
+		return
 	}
 	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
 	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
-		return 
+		return
 	}
 	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
 	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
 	if err != nil {
-		return 
+		return
 	}
-	user_array := make([]interface{}, 2)
-	user_array[0] = userdata_cipher
-	user_array[1] = userdata_signature
+	user_array := UserData{
+		UserdataCipher:    userdata_cipher,
+		UserdataSignature: userdata_signature,
+	}
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
-		return 
+		return
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
 	return invitationptr, err
@@ -760,9 +763,10 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	if err != nil {
 		return err
 	}
-	user_array := make([]interface{}, 2)
-	user_array[0] = userdata_cipher
-	user_array[1] = userdata_signature
+	user_array := UserData{
+		UserdataCipher:    userdata_cipher,
+		UserdataSignature: userdata_signature,
+	}
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
 		return err
@@ -828,10 +832,10 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	// verify and decrypt file struct
-	var realdummy = make([]interface{}, 2)
-	json.Unmarshal(encrypted_file_struct, &realdummy)
-	var verification_ds = realdummy[1].([]byte)
-	var cipher = realdummy[0].([]byte)
+	var RealData FileData
+	json.Unmarshal(encrypted_file_struct, &RealData)
+	var verification_ds = RealData.FiledataSignature
+	var cipher = RealData.FiledataCipher
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
 		return err
@@ -861,9 +865,10 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
-	file_array := make([]interface{}, 2)
-	file_array[0] = filedata_cipher
-	file_array[1] = filedata_signature
+	file_array := FileData{
+		FiledataCipher:    filedata_cipher,
+		FiledataSignature: filedata_signature,
+	}
 	file_array_store, err := json.Marshal(file_array)
 	if err != nil {
 		return err
@@ -938,9 +943,10 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
-	user_array := make([]interface{}, 2)
-	user_array[0] = userdata_cipher
-	user_array[1] = userdata_signature
+	user_array := UserData{
+		UserdataCipher:    userdata_cipher,
+		UserdataSignature: userdata_signature,
+	}
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
 		return err
