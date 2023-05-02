@@ -718,7 +718,6 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		userlib.DatastoreSet(file_id, file_array_store)
 		return nil
 	}
-	return err
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
@@ -1074,6 +1073,112 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
+	// re-encrypt, re-sign, and re-store every node of the file in datastore, must create new ids for each and update as we iterate
+	// remember we use old keys to load and new keys to store
+	// load head node
+	head_id := file_struct.HeadNode_uuid
+	encrypted_head_node, ok := userlib.DatastoreGet(head_id)
+	var HeadData NodeData
+	json.Unmarshal(encrypted_head_node, &HeadData)
+	var head_verification = HeadData.NodedataSignature
+	var head_cipher = HeadData.NodedataCiphertext
+	err = userlib.DSVerify(file_verify_key, head_cipher, head_verification)
+	if err != nil {
+		return err
+	}
+	var plainhead = userlib.SymDec(file_sym_key, head_cipher)
+	var head_node Node
+	err = json.Unmarshal(plainhead, &head_node)
+	curr := head_node
+	// iterate through
+	var old_next_id uuid.UUID
+	var new_next_id uuid.UUID
+	for !curr.End {
+		new_cur_id := uuid.New()
+		if head_id == new_cur_id {
+			file_struct.HeadNode_uuid = new_cur_id
+		}
+		old_next_id = curr.Next
+		new_next_id = uuid.New()
+		curr.Next = new_next_id
+		// store current node in datastore
+		currNodeBytes, err := json.Marshal(curr)
+		if err != nil {
+			return nil
+		}
+		var currnode_cipher = userlib.SymEnc(new_file_symKey, userlib.RandomBytes(16), currNodeBytes)
+		currode_signature, err := userlib.DSSign(new_file_signKey, currnode_cipher)
+		if err != nil {
+			return nil
+		}
+		currnode_array := NodeData{
+			NodedataCiphertext: currnode_cipher,
+			NodedataSignature:  currode_signature,
+		}
+		currnode_array_store, err := json.Marshal(currnode_array)
+		if err != nil {
+			return nil
+		}
+		userlib.DatastoreSet(new_cur_id, currnode_array_store)
+		// load next node from datastore
+		encrypted_next_node, ok := userlib.DatastoreGet(old_next_id)
+		if !ok {
+			return nil
+		}
+		var NextData NodeData
+		json.Unmarshal(encrypted_next_node, &NextData)
+		var next_verification = NextData.NodedataSignature
+		var next_cipher = NextData.NodedataCiphertext
+		err = userlib.DSVerify(file_verify_key, next_cipher, next_verification)
+		if err != nil {
+			return nil
+		}
+		var plainnext = userlib.SymDec(file_sym_key, next_cipher)
+		var next_node Node
+		err = json.Unmarshal(plainnext, &next_node)
+		curr = next_node
+	}
+	// load tail ptr (curr.End == true)
+	old_tail_id := old_next_id
+	new_tail_id := new_next_id
+	file_struct.TailNode_uuid = new_tail_id
+	encrypted_tail_node, ok := userlib.DatastoreGet(old_tail_id)
+	if !ok {
+		return nil
+	}
+	var TailData NodeData
+	json.Unmarshal(encrypted_tail_node, &TailData)
+	var tail_verification = TailData.NodedataSignature
+	var tail_cipher = TailData.NodedataCiphertext
+	err = userlib.DSVerify(file_verify_key, tail_cipher, tail_verification)
+	if err != nil {
+		return nil
+	}
+	var plaintail = userlib.SymDec(file_sym_key, tail_cipher)
+	var tail_node Node
+	err = json.Unmarshal(plaintail, &tail_node)
+	tail_node.Next = new_tail_id
+	// re-store tail node with new keys and id
+	newTailBytes, err := json.Marshal(tail_node)
+	if err != nil {
+		return nil
+	}
+	var newTail_cipher = userlib.SymEnc(new_file_symKey, userlib.RandomBytes(16), newTailBytes)
+	newTail_sig, err := userlib.DSSign(new_file_signKey, newTail_cipher)
+	if err != nil {
+		return nil
+	}
+	newTail_array := NodeData{
+		NodedataCiphertext: newTail_cipher,
+		NodedataSignature:  newTail_sig,
+	}
+	newTail_array_store, err := json.Marshal(newTail_array)
+	if err != nil {
+		return nil
+	}
+	userlib.DatastoreSet(new_tail_id, newTail_array_store)
+
+	// now, store file struct
 	new_file_id := uuid.New()
 	FileBytes, err := json.Marshal(file_struct)
 	if err != nil {
