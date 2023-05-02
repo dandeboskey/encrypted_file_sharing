@@ -768,13 +768,45 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return
 	}
 
-	// iterate through contents, return contents as a list
-	var file_list = file_struct.File_LL
-	var head = file_list.Head
-	// get all of the contents
-	for curr := head; curr != nil; curr = curr.Next {
-		content = append(content, curr.Contents...)
+	// load head node
+	head_id := file_struct.HeadNode_uuid
+	encrypted_head_node, ok := userlib.DatastoreGet(head_id)
+	var HeadData NodeData
+	json.Unmarshal(encrypted_head_node, &HeadData)
+	var head_verification = HeadData.NodedataSignature
+	var head_cipher = HeadData.NodedataCiphertext
+	err = userlib.DSVerify(file_verify_key, head_cipher, head_verification)
+	if err != nil {
+		return
 	}
+	var plainhead = userlib.SymDec(file_sym_key, head_cipher)
+	var head_node Node
+	err = json.Unmarshal(plainhead, &head_node)
+
+	curr := head_node
+	// iterate through contents, return contents as a list
+	// get all of the contents
+	for !curr.End {
+		content = append(content, curr.Contents...)
+		next_id := curr.Next
+		encrypted_next_node, ok := userlib.DatastoreGet(next_id)
+		if !ok {
+			return
+		}
+		var NextData NodeData
+		json.Unmarshal(encrypted_next_node, &NextData)
+		var next_verification = NextData.NodedataSignature
+		var next_cipher = NextData.NodedataCiphertext
+		err = userlib.DSVerify(file_verify_key, next_cipher, next_verification)
+		if err != nil {
+			return
+		}
+		var plainnext = userlib.SymDec(file_sym_key, next_cipher)
+		var next_node Node
+		err = json.Unmarshal(plainnext, &next_node)
+		curr = next_node
+	}
+	content = append(content, curr.Contents...)
 	return content, err
 }
 
