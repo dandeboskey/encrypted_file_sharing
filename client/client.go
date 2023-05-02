@@ -95,6 +95,12 @@ func someUsefulThings() {
 	_ = fmt.Sprintf("%s_%d", "file", 1)
 }
 
+type HybridData struct {
+    Ciphertext      []byte
+    Verification    []byte
+    EncryptedSymKey []byte
+}
+
 func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey, data []byte, id uuid.UUID) (err error) {
 	// Generate a symmetric key
 	var password, salt_bytes, key []byte
@@ -131,15 +137,18 @@ func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey
 func HybridVerifyThenDecrypt(dec_key userlib.PKEDecKey, verify_key userlib.DSVerifyKey, data []byte, id uuid.UUID) (content []byte, err error) {
 	// Load the data from datastore with id
 	enc_data, ok := userlib.DatastoreGet(id)
-	if !ok {
-		return
-	}
-	// Unmarshal the array
-	realdummy := make([]interface{}, 3)
-	json.Unmarshal(enc_data, &realdummy)
-	ciphertext := []byte(realdummy[0].(string))
-	verification := []byte(realdummy[1].(string))
-	encrypted_sym_key := []byte(realdummy[2].(string))
+    if !ok {
+        return
+    }
+    // Unmarshal the data
+    var realData HybridData
+    err = json.Unmarshal(enc_data, &realData)
+    if err != nil {
+        return
+    }
+    ciphertext := realData.Ciphertext
+    verification := realData.Verification
+    encrypted_sym_key := realData.EncryptedSymKey
 	// Verify the signature with verify_key
 	err = userlib.DSVerify(verify_key, ciphertext, verification)
 	if err != nil {
@@ -206,6 +215,11 @@ type User struct {
 	AccessPointVerifyMap  map[string]userlib.PublicKeyType
 }
 
+type UserData struct {
+    UserdataCipher  []byte
+    UserdataSignature []byte
+}
+
 // You can add other attributes here if you want! But note that in order for attributes to
 // be included when this struct is serialized to/from JSON, they must be capitalized.
 // On the flipside, if you have an attribute that you want to be able to access from
@@ -243,6 +257,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	// put verification key in keystore: hash(username + “_user_verify”):Verify_user_key
 	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_user_verify"))), DS_verify_key)
+	
 	// generate RSA key pair for encrypting and decrypting invitations
 	var Enc_inv_key userlib.PKEEncKey
 	Enc_inv_key, userdata.Dec_inv_key, err = userlib.PKEKeyGen()
@@ -277,6 +292,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	user_array := make([]interface{}, 2)
 	user_array[0] = userdata_cipher
 	user_array[1] = userdata_signature
+	print(userdata_signature)
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
 		return
@@ -286,51 +302,63 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
-	// generate sym_user_key for user
-	var password_bytes, salt_bytes []byte
-	password_bytes, err = json.Marshal(password)
-	if err != nil {
-		return
-	}
-	salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
-	if err != nil {
-		return
-	}
-	// generate root key
-	sym_user_key := userlib.Argon2Key(password_bytes, salt_bytes, 16)
-	// get the user uuid
-	user_id, err := uuid.FromBytes(sym_user_key)
-	if err != nil {
-		return
-	}
-	User, ok := userlib.DatastoreGet(user_id)
-	// verify that user exists in datastore
+    // generate sym_user_key for user
+    var password_bytes, salt_bytes []byte
+    password_bytes, err = json.Marshal(password)
+    if err != nil {
+        return
+    }
+    salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
+    if err != nil {
+        return
+    }
+    // generate root key
+    sym_user_key := userlib.Argon2Key(password_bytes, salt_bytes, 16)
+    // get the user uuid
+    user_id, err := uuid.FromBytes(sym_user_key)
+    if err != nil {
+        return
+    }
+    userBytes, ok := userlib.DatastoreGet(user_id)
+    // verify that user exists in datastore
+    if !ok {
+        return
+    }
+    // pull encrypted & signed user struct from datastore
+    var realData []interface{}
+    err = json.Unmarshal(userBytes, &realData)
+    if err != nil {
+        return
+    }
+    key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(username + "_user_verify"))))
+    if !ok {
+        return
+    }
+    // verify and decrypt user struct
+    verification_ds, ok := realData[1].([]byte)
 	if !ok {
-		return
+		return nil, fmt.Errorf("failed to convert verification_ds to []byte")
 	}
-	// pull encrypted & signed user struct from datastore
-	var realdummy = make([]interface{}, 2)
-	json.Unmarshal(User, &realdummy)
-	key, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(username + "_user_verify"))))
-	if !ok {
-		return
-	}
-	// verify and decrypt user struct
-	var verification_ds = []byte(realdummy[1].(string))
-	var cipher = []byte(realdummy[0].(string))
 
-	err = userlib.DSVerify(key, cipher, verification_ds)
-	if err != nil {
-		print("verification err on verifying the user")
-		return
+	cipher, ok := realData[0].([]byte)
+	if !ok {
+		return nil, fmt.Errorf("failed to convert cipher to []byte")
 	}
-	var plaintext = userlib.SymDec(sym_user_key, cipher)
-	// set userdataptr to the unencrypted and verified user struct
-	err = json.Unmarshal(plaintext, userdataptr)
-	if err != nil {
-		return
-	}
-	return userdataptr, err
+	print(verification_ds)
+
+    err = userlib.DSVerify(key, cipher, verification_ds)
+    if err != nil {
+        print("verification err on verifying the user")
+        return
+    }
+    var plaintext = userlib.SymDec(sym_user_key, cipher)
+    // set userdataptr to the unencrypted and verified user struct
+    userdataptr = &User{}
+    err = json.Unmarshal(plaintext, userdataptr)
+    if err != nil {
+        return
+    }
+    return userdataptr, err
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
