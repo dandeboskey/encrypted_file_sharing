@@ -205,6 +205,7 @@ type User struct {
 	Username              string
 	Sym_user_key          []byte
 	User_uuid             uuid.UUID
+	Sign_user_key         userlib.PrivateKeyType
 	Dec_inv_key           userlib.PKEDecKey
 	Sign_inv_key          userlib.PrivateKeyType
 	SharedAccessPointMap  map[string][]uuid.UUID
@@ -257,11 +258,14 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var DS_verify_key userlib.PublicKeyType
 	var DS_sign_key userlib.DSSignKey
 	DS_sign_key, DS_verify_key, err = userlib.DSKeyGen()
+	fmt.Print(DS_verify_key)
 	if err != nil {
 		return
 	}
 	// put verification key in keystore: hash(username + “_user_verify”):Verify_user_key
 	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_user_verify"))), DS_verify_key)
+	// put sign key in user struct (for self)
+	userdata.Sign_user_key = DS_sign_key
 
 	// generate RSA key pair for encrypting and decrypting invitations
 	var Enc_inv_key userlib.PKEEncKey
@@ -294,6 +298,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return
 	}
+	fmt.Print(userdata_signature)
 	user_array := UserData{
 		UserdataCipher:    userdata_cipher,
 		UserdataSignature: userdata_signature,
@@ -339,16 +344,11 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if !ok {
 		return
 	}
+	fmt.Print(key)
 	// verify and decrypt user struct
 	verification_ds := realData.UserdataSignature
-	if !ok {
-		return nil, fmt.Errorf("failed to convert verification_ds to []byte")
-	}
+	fmt.Print(verification_ds)
 	cipher := realData.UserdataCipher
-	if !ok {
-		return nil, fmt.Errorf("failed to convert cipher to []byte")
-	}
-
 	err = userlib.DSVerify(key, cipher, verification_ds)
 	if err != nil {
 		return
@@ -452,6 +452,30 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return
 	}
+
+	// re-store user struct because maps were modified
+	DS_sign_key := userdata.Sign_user_key
+	if err != nil {
+		return
+	}
+	userdata_bytes, err := json.Marshal(userdata)
+	if err != nil {
+		return
+	}
+	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
+	userdata_signature, err := userlib.DSSign(DS_sign_key, userdata_cipher)
+	if err != nil {
+		return
+	}
+	user_array := UserData{
+		UserdataCipher:    userdata_cipher,
+		UserdataSignature: userdata_signature,
+	}
+	user_array_store, err := json.Marshal(user_array)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
 	return err
 }
 
@@ -504,10 +528,10 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	}
 
 	// append content to file struct contents
-	var file_list = file_struct.File_LL
-	var tail_ptr = file_list.Tail
+	file_list := file_struct.File_LL
+	tail_ptr := file_list.Tail
 	new_node := Node{Prev: tail_ptr, Next: nil, Contents: content}
-	*tail_ptr.Next = new_node
+	tail_ptr.Next = &new_node
 	file_list.Tail = &new_node
 	file_struct.Num_bytes += len(content)
 	// encrypt and sign file
@@ -694,17 +718,16 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return
 	}
 	// re-store user struct
-	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
+	DS_sign_key := userdata.Sign_user_key
 	if err != nil {
 		return
 	}
-	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
 	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
 		return
 	}
 	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
-	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
+	userdata_signature, err := userlib.DSSign(DS_sign_key, userdata_cipher)
 	if err != nil {
 		return
 	}
@@ -749,17 +772,17 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	userdata.AccessPointDecryptMap[filename] = invite.Dec_AXS_key
 	userdata.AccessPointVerifyMap[filename] = invite.Verify_AXS_key
 	// re-encrypt user struct with sym key, re-sign user struct with new DS pair, and overwrite verification key in keystore
-	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
+	// re-store user struct
+	DS_sign_key := userdata.Sign_user_key
 	if err != nil {
 		return err
 	}
-	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
 	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
 		return err
 	}
 	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
-	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
+	userdata_signature, err := userlib.DSSign(DS_sign_key, userdata_cipher)
 	if err != nil {
 		return err
 	}
@@ -929,17 +952,16 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, cur_axs_id)
 	}
 	// 	re-encrypt re-sign and store owner struct (map was modified)
-	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
+	DS_sign_key := userdata.Sign_user_key
 	if err != nil {
 		return err
 	}
-	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
 	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
 		return err
 	}
 	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
-	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
+	userdata_signature, err := userlib.DSSign(DS_sign_key, userdata_cipher)
 	if err != nil {
 		return err
 	}
