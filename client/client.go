@@ -429,9 +429,9 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	if err != nil {
 		return
 	}
-	headnode_array := FileData{
-		FiledataCipher:    headnode_cipher,
-		FiledataSignature: headnode_signature,
+	headnode_array := NodeData{
+		NodedataCiphertext: headnode_cipher,
+		NodedataSignature:  headnode_signature,
 	}
 	headnode_array_store, err := json.Marshal(headnode_array)
 	if err != nil {
@@ -531,10 +531,12 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	json.Unmarshal(encrypted_file_struct, &RealData)
 	var verification_ds = RealData.FiledataSignature
 	var cipher = RealData.FiledataCipher
+	fmt.Print("verifying file struct")
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
 		return err
 	}
+	fmt.Print("file verification succeeded")
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
 	var file_struct File_struct
 	// set file_struct to the unencrypted and verified file struct
@@ -542,7 +544,6 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	if err != nil {
 		return err
 	}
-
 	// append content to file struct contents
 	if file_struct.HeadNode_uuid == file_struct.TailNode_uuid {
 		encrypted_head_node, ok := userlib.DatastoreGet(file_struct.HeadNode_uuid)
@@ -552,15 +553,17 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		// verify and decrypt file struct
 		var HeadData NodeData
 		json.Unmarshal(encrypted_head_node, &HeadData)
-		var verification_ds = HeadData.NodedataSignature
-		var cipher = HeadData.NodedataCiphertext
-		err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
+		headverification_ds := HeadData.NodedataSignature
+		headcipher := HeadData.NodedataCiphertext
+		fmt.Print("verifying head node")
+		err = userlib.DSVerify(file_verify_key, headcipher, headverification_ds)
 		if err != nil {
 			return err
 		}
-		var plaintext = userlib.SymDec(file_sym_key, cipher)
+		fmt.Print("head node verification succeeded")
+		var plaintext = userlib.SymDec(file_sym_key, headcipher)
 		var head_node Node
-		// set file_struct to the unencrypted and verified file struct
+		// set head_node to the unencrypted and verified file struct
 		err = json.Unmarshal(plaintext, &head_node)
 		if err != nil {
 			return err
@@ -647,7 +650,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		}
 		var plaintext = userlib.SymDec(file_sym_key, cipher)
 		var tail_node Node
-		// set file_struct to the unencrypted and verified file struct
+		// set tail_node to the unencrypted and verified file struct
 		err = json.Unmarshal(plaintext, &tail_node)
 		if err != nil {
 			return err
