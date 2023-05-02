@@ -106,12 +106,12 @@ func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey
 	// Sign the encrypted data
 	signed, err := userlib.DSSign(sign_key, ciphertext)
 	if err != nil {
-		return nil
+		return err
 	}
 	// Encrypt the symmetric key
 	enc_sym_key, err := userlib.PKEEnc(enc_key, key)
 	if err != nil {
-		return nil
+		return err
 	}
 	// Create an array with (encrypted data, signature, encrypted symmetric key)
 	user_array := make([]interface{}, 3)
@@ -121,7 +121,7 @@ func HybridEncryptThenSign(enc_key userlib.PKEEncKey, sign_key userlib.DSSignKey
 	// Marshal the array
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
-		return nil
+		return err
 	}
 	// Store array in datastore with id
 	userlib.DatastoreSet(id, user_array_store)
@@ -137,20 +137,17 @@ func HybridVerifyThenDecrypt(dec_key userlib.PKEDecKey, verify_key userlib.DSVer
 	// Unmarshal the array
 	realdummy := make([]interface{}, 3)
 	json.Unmarshal(enc_data, &realdummy)
-	ciphertext := realdummy[0].([]byte)
-	verification := realdummy[1].([]byte)
-	encrypted_sym_key := realdummy[2].([]byte)
+	ciphertext := []byte(realdummy[0].(string))
+	verification := []byte(realdummy[1].(string))
+	encrypted_sym_key := []byte(realdummy[2].(string))
 	// Verify the signature with verify_key
 	err = userlib.DSVerify(verify_key, ciphertext, verification)
 	if err != nil {
+		print("verification err on hybrid verify and decrypt")
 		return
 	}
 	// Decrypt symmetric key (in array) with dec_key
 	sym_key, err := userlib.PKEDec(dec_key, encrypted_sym_key)
-	if err != nil {
-		return
-	}
-	err = userlib.DSVerify(verify_key, ciphertext, verification)
 	if err != nil {
 		return
 	}
@@ -319,10 +316,12 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	// verify and decrypt user struct
-	var verification_ds = realdummy[1].([]byte)
-	var cipher = realdummy[0].([]byte)
+	var verification_ds = []byte(realdummy[1].(string))
+	var cipher = []byte(realdummy[0].(string))
+
 	err = userlib.DSVerify(key, cipher, verification_ds)
 	if err != nil {
+		print("verification err on verifying the user")
 		return
 	}
 	var plaintext = userlib.SymDec(sym_user_key, cipher)
@@ -439,12 +438,12 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
-		return nil
+		return err
 	}
 	var AXS AccessPoint
 	err = json.Unmarshal(axs, &AXS)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// pull file from datastore
@@ -454,7 +453,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
-		return nil
+		return err
 	}
 	// verify and decrypt file struct
 	var realdummy = make([]interface{}, 2)
@@ -463,14 +462,15 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	var cipher = realdummy[0].([]byte)
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
-		return nil
+		print("verification err on file append")
+		return err
 	}
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
 	var file_struct File_struct
 	// set file_struct to the unencrypted and verified file struct
 	err = json.Unmarshal(plaintext, &file_struct)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	// append content to file struct contents
@@ -483,23 +483,23 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	// encrypt and sign file
 	FileBytes, err := json.Marshal(file_struct)
 	if err != nil {
-		return nil
+		return err
 	}
 	var filedata_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), FileBytes)
 	filedata_signature, err := userlib.DSSign(file_sign_key, filedata_cipher)
 	if err != nil {
-		return nil
+		return err
 	}
 	file_array := make([]interface{}, 2)
 	file_array[0] = filedata_cipher
 	file_array[1] = filedata_signature
 	file_array_store, err := json.Marshal(file_array)
 	if err != nil {
-		return nil
+		return err
 	}
 	userlib.DatastoreSet(file_id, file_array_store)
 	// put in datastore
-	return nil
+	return err
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
@@ -539,6 +539,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	var cipher = realdummy[0].([]byte)
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
+		print("verification error on load file")
 		return
 	}
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
@@ -559,7 +560,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	return content, err
 }
 
-func (userdata *User) CreateInvitation(filename string, recipientUsername string) {
+func (userdata *User) CreateInvitation(filename string, recipientUsername string) (invitationptr uuid.UUID, err error) {
 	// create random inv_id
 	inv_id := uuid.New()
 
@@ -593,7 +594,8 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		if !ok {
 			return
 		}
-		InviteBytes, err := json.Marshal(Invite)
+		var InviteBytes []byte
+		InviteBytes, err = json.Marshal(Invite)
 		if err != nil {
 			return
 		}
@@ -655,7 +657,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	}
 	InviteBytes, err := json.Marshal(Invite)
 	if err != nil {
-		return
+		return 
 	}
 	err = HybridEncryptThenSign(inv_enc_key, userdata.Sign_inv_key, InviteBytes, inv_id)
 	if err != nil {
@@ -664,27 +666,27 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	// re-store user struct
 	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
 	if err != nil {
-		return
+		return 
 	}
 	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
 	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
-		return
+		return 
 	}
 	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
 	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
 	if err != nil {
-		return
+		return 
 	}
 	user_array := make([]interface{}, 2)
 	user_array[0] = userdata_cipher
 	user_array[1] = userdata_signature
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
-		return
+		return 
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
-	return
+	return invitationptr, err
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
@@ -700,16 +702,16 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	}
 	invitation, err := HybridVerifyThenDecrypt(userdata.Dec_inv_key, VerifyKey, inv_bytes, invitationPtr)
 	if err != nil {
-		return nil
+		return err
 	}
 	// unmarshal the invitation
 	if err != nil {
-		return nil
+		return err
 	}
 	var invite Invitation
 	err = json.Unmarshal(invitation, &invite)
 	if err != nil {
-		return nil
+		return err
 	}
 	// store invitation data in user's maps
 	userdata.UserAccessPointMap[filename] = invite.AXS_uuid
@@ -718,24 +720,24 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	// re-encrypt user struct with sym key, re-sign user struct with new DS pair, and overwrite verification key in keystore
 	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
 	if err != nil {
-		return nil
+		return err
 	}
 	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
 	userdata_bytes, err := json.Marshal(userdata)
 	if err != nil {
-		return nil
+		return err
 	}
 	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
 	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
 	if err != nil {
-		return nil
+		return err
 	}
 	user_array := make([]interface{}, 2)
 	user_array[0] = userdata_cipher
 	user_array[1] = userdata_signature
 	user_array_store, err := json.Marshal(user_array)
 	if err != nil {
-		return nil
+		return err
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
 	return err
@@ -752,15 +754,15 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
-		return nil
+		return err
 	}
 	var AXS AccessPoint
 	err = json.Unmarshal(axs, &AXS)
 	if err != nil {
-		return nil
+		return err
 	}
 	if AXS.Owner != userdata.Username {
-		return nil
+		return err
 	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
 	access_point_ids := userdata.SharedAccessPointMap[filename]
@@ -774,12 +776,12 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		cur_AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
 		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
 		if err != nil {
-			return nil
+			return err
 		}
 		var cur_AXS AccessPoint
 		err = json.Unmarshal(cur_axs, &cur_AXS)
 		if err != nil {
-			return nil
+			return err
 		}
 		// Remoove accesspoint from shared map list and delete the access point from datastore
 		if cur_AXS.User == recipientUsername {
@@ -795,7 +797,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
-		return nil
+		return err
 	}
 	// verify and decrypt file struct
 	var realdummy = make([]interface{}, 2)
@@ -804,14 +806,14 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	var cipher = realdummy[0].([]byte)
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
-		return nil
+		return err
 	}
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
 	var file_struct File_struct
 	// set file_struct to the unencrypted and verified file struct
 	err = json.Unmarshal(plaintext, &file_struct)
 	if err != nil {
-		return nil
+		return err
 	}
 	random_bytes := userlib.RandomBytes(16)
 	salt_bytes := userlib.RandomBytes(16)
@@ -819,41 +821,102 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	// generate DS pair for file
 	new_file_signKey, new_file_verifyKey, err := userlib.DSKeyGen()
 	if err != nil {
-		return nil
+		return err
 	}
 	new_file_id := uuid.New()
 	FileBytes, err := json.Marshal(file_struct)
 	if err != nil {
-		return nil
+		return err
 	}
 	var filedata_cipher = userlib.SymEnc(new_file_symKey, userlib.RandomBytes(16), FileBytes)
 	filedata_signature, err := userlib.DSSign(new_file_signKey, filedata_cipher)
 	if err != nil {
-		return nil
+		return err
 	}
 	file_array := make([]interface{}, 2)
 	file_array[0] = filedata_cipher
 	file_array[1] = filedata_signature
 	file_array_store, err := json.Marshal(file_array)
 	if err != nil {
-		return nil
+		return err
 	}
 	userlib.DatastoreSet(new_file_id, file_array_store)
 	//  update owner's access point, re-encrypt re-sign and store
-	newAXS_id := uuid.New()
+	//newAXS_id := uuid.New()
 	newAXS := AccessPoint{
 		User:            userdata.Username,
 		Owner:           userdata.Username,
 		File_uuid:       new_file_id,
 		Sym_file_key:    new_file_symKey,
 		Verify_file_key: new_file_verifyKey,
-		Sign_file_key:   new_file_verifyKey,
+		Sign_file_key:   new_file_signKey,
 	}
-	userdata.UserAccessPointMap[filename] = newAXS_id
-	HybridEncryptThenSign()
+	// userdata.UserAccessPointMap[filename] = newAXS_id
+	var axs_bytes []byte
+	axs_bytes, err = json.Marshal(newAXS)
+	if err != nil {
+		return err
+	}
+	AXS_encKey := userdata.AccessPointEncryptMap[filename]
+	AXS_signKey := userdata.AccessPointSignMap[filename]
+	HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, axs_id)
 
 	//  update remaining access points, re-encrypt re-sign and store
-
+	new_access_point_ids := userdata.SharedAccessPointMap[filename]
+	for _, val := range new_access_point_ids {
+		cur_axs_id := val
+		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
+		if !ok {
+			return nil
+		}
+		cur_AXS_decKey := userdata.AccessPointDecryptMap[filename]
+		cur_AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
+		if err != nil {
+			return err
+		}
+		var cur_AXS AccessPoint
+		err = json.Unmarshal(cur_axs, &cur_AXS)
+		if err != nil {
+			return err
+		}
+		recipient := cur_AXS.User
+		newAXS := AccessPoint{
+			User:            recipient,
+			Owner:           userdata.Username,
+			File_uuid:       new_file_id,
+			Sym_file_key:    new_file_symKey,
+			Verify_file_key: new_file_verifyKey,
+			Sign_file_key:   new_file_signKey,
+		}
+		axs_bytes, err = json.Marshal(newAXS)
+		if err != nil {
+			return err
+		}
+		HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, cur_axs_id)
+	}
 	// 	re-encrypt re-sign and store owner struct (map was modified)
-	return nil
+	newUserDS_signKey, newUserDS_verifyKey, err := userlib.DSKeyGen()
+	if err != nil {
+		return err
+	}
+	userlib.KeystoreSet(string(userlib.Hash([]byte(userdata.Username+"_user_verify"))), newUserDS_verifyKey)
+	userdata_bytes, err := json.Marshal(userdata)
+	if err != nil {
+		return err
+	}
+	var userdata_cipher = userlib.SymEnc(userdata.Sym_user_key, userlib.RandomBytes(16), userdata_bytes)
+	userdata_signature, err := userlib.DSSign(newUserDS_signKey, userdata_cipher)
+	if err != nil {
+		return err
+	}
+	user_array := make([]interface{}, 2)
+	user_array[0] = userdata_cipher
+	user_array[1] = userdata_signature
+	user_array_store, err := json.Marshal(user_array)
+	if err != nil {
+		return err
+	}
+	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
+	return err
 }
