@@ -166,19 +166,15 @@ func HybridVerifyThenDecrypt(dec_key userlib.PKEDecKey, verify_key userlib.DSVer
 }
 
 type Node struct {
-	Prev     *Node
-	Next     *Node
 	Contents []byte
-}
-
-type LL struct {
-	Head *Node
-	Tail *Node
+	Next     uuid.UUID
+	End      bool
 }
 
 type File_struct struct {
-	File_LL   LL
-	Num_bytes int
+	HeadNode_uuid uuid.UUID
+	TailNode_uuid uuid.UUID
+	Num_bytes     int
 }
 
 type AccessPoint struct {
@@ -226,6 +222,11 @@ type FileData struct {
 	FiledataSignature []byte
 }
 
+type NodeData struct {
+	NodedataCiphertext []byte
+	NodedataSignature  []byte
+}
+
 // You can add other attributes here if you want! But note that in order for attributes to
 // be included when this struct is serialized to/from JSON, they must be capitalized.
 // On the flipside, if you have an attribute that you want to be able to access from
@@ -237,9 +238,10 @@ type FileData struct {
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
+	userdataptr = &userdata
 	userdata.Username = username
 	var password_bytes, salt_bytes []byte
-	password_bytes, err = json.Marshal(password)
+	password_bytes, err = json.Marshal(username + password)
 	if err != nil {
 		return
 	}
@@ -258,7 +260,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var DS_verify_key userlib.PublicKeyType
 	var DS_sign_key userlib.DSSignKey
 	DS_sign_key, DS_verify_key, err = userlib.DSKeyGen()
-	fmt.Print(DS_verify_key)
 	if err != nil {
 		return
 	}
@@ -298,7 +299,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Print(userdata_signature)
 	user_array := UserData{
 		UserdataCipher:    userdata_cipher,
 		UserdataSignature: userdata_signature,
@@ -308,13 +308,13 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
-	return &userdata, nil
+	return userdataptr, nil
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	// generate sym_user_key for user
 	var password_bytes, salt_bytes []byte
-	password_bytes, err = json.Marshal(password)
+	password_bytes, err = json.Marshal(username + password)
 	if err != nil {
 		return
 	}
@@ -344,10 +344,8 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if !ok {
 		return
 	}
-	fmt.Print(key)
 	// verify and decrypt user struct
 	verification_ds := realData.UserdataSignature
-	fmt.Print(verification_ds)
 	cipher := realData.UserdataCipher
 	err = userlib.DSVerify(key, cipher, verification_ds)
 	if err != nil {
@@ -408,12 +406,10 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	}
 	var numBytes int
 	numBytes = len(contentBytes)
-	LL_Node := Node{Prev: nil, Next: nil, Contents: contentBytes}
-	File_list := LL{Head: &LL_Node, Tail: &LL_Node}
+	head_id := uuid.New()
 
-	FileStruct := File_struct{File_LL: File_list,
-		Num_bytes: numBytes,
-	}
+	headnode := Node{Contents: content, Next: head_id, End: true}
+	FileStruct := File_struct{HeadNode_uuid: head_id, TailNode_uuid: head_id, Num_bytes: numBytes}
 
 	// create accesspoint for owner
 	AXS := AccessPoint{User: userdata.Username,
@@ -422,6 +418,26 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		Sym_file_key:    File_sym_key,
 		Sign_file_key:   File_DS_signKey,
 		Verify_file_key: File_DS_verifyKey}
+
+	// store nodes after encrypting with same symmetric and ds keys as that of the file struct
+	HeadNodeBytes, err := json.Marshal(headnode)
+	if err != nil {
+		return
+	}
+	var headnode_cipher = userlib.SymEnc(File_sym_key, userlib.RandomBytes(16), HeadNodeBytes)
+	headnode_signature, err := userlib.DSSign(File_DS_signKey, headnode_cipher)
+	if err != nil {
+		return
+	}
+	headnode_array := FileData{
+		FiledataCipher:    headnode_cipher,
+		FiledataSignature: headnode_signature,
+	}
+	headnode_array_store, err := json.Marshal(headnode_array)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(head_id, headnode_array_store)
 
 	// store file struct after encrypting with symmetric key and signing with DS key
 	FileBytes, err := json.Marshal(FileStruct)
@@ -528,32 +544,180 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	}
 
 	// append content to file struct contents
-	file_list := file_struct.File_LL
-	tail_ptr := file_list.Tail
-	new_node := Node{Prev: tail_ptr, Next: nil, Contents: content}
-	tail_ptr.Next = &new_node
-	file_list.Tail = &new_node
-	file_struct.Num_bytes += len(content)
-	// encrypt and sign file
-	FileBytes, err := json.Marshal(file_struct)
-	if err != nil {
-		return err
+	if file_struct.HeadNode_uuid == file_struct.TailNode_uuid {
+		encrypted_head_node, ok := userlib.DatastoreGet(file_struct.HeadNode_uuid)
+		if !ok {
+			return err
+		}
+		// verify and decrypt file struct
+		var HeadData NodeData
+		json.Unmarshal(encrypted_head_node, &HeadData)
+		var verification_ds = HeadData.NodedataSignature
+		var cipher = HeadData.NodedataCiphertext
+		err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
+		if err != nil {
+			return err
+		}
+		var plaintext = userlib.SymDec(file_sym_key, cipher)
+		var head_node Node
+		// set file_struct to the unencrypted and verified file struct
+		err = json.Unmarshal(plaintext, &head_node)
+		if err != nil {
+			return err
+		}
+		// create new tail node for appended content
+		new_tail_id := uuid.New()
+		new_tail := Node{Contents: content, Next: new_tail_id, End: true}
+		head_node.End = false
+		head_node.Next = new_tail_id
+		file_struct.TailNode_uuid = new_tail_id
+		file_struct.Num_bytes += len(content)
+		// encrypt and sign head
+		HeadBytes, err := json.Marshal(head_node)
+		if err != nil {
+			return err
+		}
+		var headnode_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), HeadBytes)
+		headnode_signature, err := userlib.DSSign(file_sign_key, headnode_cipher)
+		if err != nil {
+			return err
+		}
+		head_array := NodeData{
+			NodedataCiphertext: headnode_cipher,
+			NodedataSignature:  headnode_signature,
+		}
+		head_array_store, err := json.Marshal(head_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(file_struct.HeadNode_uuid, head_array_store)
+		// encrypt and sign new tail
+		TailBytes, err := json.Marshal(new_tail)
+		if err != nil {
+			return err
+		}
+		var tailnode_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), TailBytes)
+		tailnode_signature, err := userlib.DSSign(file_sign_key, tailnode_cipher)
+		if err != nil {
+			return err
+		}
+		tail_array := NodeData{
+			NodedataCiphertext: tailnode_cipher,
+			NodedataSignature:  tailnode_signature,
+		}
+		tail_array_store, err := json.Marshal(tail_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(new_tail_id, tail_array_store)
+		// encrypt and sign file struct
+		FileBytes, err := json.Marshal(file_struct)
+		if err != nil {
+			return err
+		}
+		var filedata_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), FileBytes)
+		filedata_signature, err := userlib.DSSign(file_sign_key, filedata_cipher)
+		if err != nil {
+			return err
+		}
+		file_array := FileData{
+			FiledataCipher:    filedata_cipher,
+			FiledataSignature: filedata_signature,
+		}
+		file_array_store, err := json.Marshal(file_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(file_id, file_array_store)
+		return nil
+	} else {
+		oldtail_id := file_struct.TailNode_uuid
+		encrypted_tail_node, ok := userlib.DatastoreGet(file_struct.TailNode_uuid)
+		if !ok {
+			return err
+		}
+		// verify and decrypt file struct
+		var TailData NodeData
+		json.Unmarshal(encrypted_tail_node, &TailData)
+		var verification_ds = TailData.NodedataSignature
+		var cipher = TailData.NodedataCiphertext
+		err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
+		if err != nil {
+			return err
+		}
+		var plaintext = userlib.SymDec(file_sym_key, cipher)
+		var tail_node Node
+		// set file_struct to the unencrypted and verified file struct
+		err = json.Unmarshal(plaintext, &tail_node)
+		if err != nil {
+			return err
+		}
+		// create new tail node for appended content
+		new_tail_id := uuid.New()
+		new_tail := Node{Contents: content, Next: new_tail_id, End: true}
+		tail_node.End = false
+		tail_node.Next = new_tail_id
+		file_struct.TailNode_uuid = new_tail_id
+		file_struct.Num_bytes += len(content)
+		// encrypt and sign old tail
+		OldTailBytes, err := json.Marshal(tail_node)
+		if err != nil {
+			return err
+		}
+		var oldtailnode_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), OldTailBytes)
+		oldtailnode_signature, err := userlib.DSSign(file_sign_key, oldtailnode_cipher)
+		if err != nil {
+			return err
+		}
+		oldtail_array := NodeData{
+			NodedataCiphertext: oldtailnode_cipher,
+			NodedataSignature:  oldtailnode_signature,
+		}
+		oldtail_array_store, err := json.Marshal(oldtail_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(oldtail_id, oldtail_array_store)
+		// encrypt and sign new tail
+		TailBytes, err := json.Marshal(new_tail)
+		if err != nil {
+			return err
+		}
+		var tailnode_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), TailBytes)
+		tailnode_signature, err := userlib.DSSign(file_sign_key, tailnode_cipher)
+		if err != nil {
+			return err
+		}
+		tail_array := NodeData{
+			NodedataCiphertext: tailnode_cipher,
+			NodedataSignature:  tailnode_signature,
+		}
+		tail_array_store, err := json.Marshal(tail_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(new_tail_id, tail_array_store)
+		// encrypt and sign file struct
+		FileBytes, err := json.Marshal(file_struct)
+		if err != nil {
+			return err
+		}
+		var filedata_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), FileBytes)
+		filedata_signature, err := userlib.DSSign(file_sign_key, filedata_cipher)
+		if err != nil {
+			return err
+		}
+		file_array := FileData{
+			FiledataCipher:    filedata_cipher,
+			FiledataSignature: filedata_signature,
+		}
+		file_array_store, err := json.Marshal(file_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(file_id, file_array_store)
+		return nil
 	}
-	var filedata_cipher = userlib.SymEnc(file_sym_key, userlib.RandomBytes(16), FileBytes)
-	filedata_signature, err := userlib.DSSign(file_sign_key, filedata_cipher)
-	if err != nil {
-		return err
-	}
-	file_array := FileData{
-		FiledataCipher:    filedata_cipher,
-		FiledataSignature: filedata_signature,
-	}
-	file_array_store, err := json.Marshal(file_array)
-	if err != nil {
-		return err
-	}
-	userlib.DatastoreSet(file_id, file_array_store)
-	// put in datastore
 	return err
 }
 
