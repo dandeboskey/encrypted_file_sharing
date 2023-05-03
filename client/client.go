@@ -1151,6 +1151,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
+	fmt.Println("finding user to revoke's accesspoint")
 	access_point_ids := user_maps.SharedAccessPointMap[filename]
 	for i, val := range access_point_ids {
 		cur_axs_id := val
@@ -1159,23 +1160,28 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			return nil
 		}
 		cur_AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+		fmt.Println(cur_AXS_decKey)
 		cur_AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
+		fmt.Println(cur_AXS_verifyKey)
 		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
 		if err != nil {
 			return err
 		}
+		fmt.Println("ver succ")
 		var cur_AXS AccessPoint
 		err = json.Unmarshal(cur_axs, &cur_AXS)
 		if err != nil {
 			return err
 		}
-		// Remoove accesspoint from shared map list and delete the access point from datastore
+		// Remove accesspoint from shared map list and delete the access point from datastore
 		if cur_AXS.User == recipientUsername {
 			access_point_ids = append(access_point_ids[:i], access_point_ids[i+1:]...)
 			userlib.DatastoreDelete(cur_axs_id)
+			break
 		}
 	}
 	user_maps.SharedAccessPointMap[filename] = access_point_ids
+	fmt.Println("accesspoint in question found")
 
 	// 	generate new file id, decryption, and verification keys, re-encrypt re-sign and store file
 	file_id := AXS.File_uuid
