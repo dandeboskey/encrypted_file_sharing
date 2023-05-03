@@ -242,11 +242,25 @@ var _ = Describe("Client Tests", func() {
 			err = charles.AppendToFile(charlesFile, []byte(contentTwo))
 			Expect(err).ToNot(BeNil())
 		})
-	})
 
-	Describe("Custom Test: Testing Revoke w/ Full Tree and Multiple Appends", func() {
+		Specify("Custom Test: Case Sensitive Users", func() {
+			userlib.DebugMsg("Initializing users Alice, and alice")
+			bob, err = client.InitUser("Alice", defaultPassword)
+			Expect(err).To(BeNil())
 
-		Specify("Testing Revoke w/ Full Tree and Multiple Appends", func() {
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user Alice.")
+			bob, err = client.GetUser("Alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user alice.")
+			alice, err = client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		})
+
+		Specify("Custom Test: Testing Revoke w/ Full Tree and Multiple Appends", func() {
 			userlib.DebugMsg("Initializing users Alice, Bob, Charlie, and Doris.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -343,26 +357,60 @@ var _ = Describe("Client Tests", func() {
 			_, err = doris.LoadFile(dorisFile)
 			Expect(err).ToNot(BeNil())
 		})
-	})
 
-	Describe("Custom Test: Case Sensitive Users", func() {
+		Specify("Custom Test: Testing Empty Usernames", func() {
+			userlib.DebugMsg("Initializing user")
+			alice, err = client.InitUser("", defaultPassword)
+			Expect(err).ToNot(BeNil())
+		})
 
-		Specify("Custom Test: Case Sensitive Users", func() {
-			userlib.DebugMsg("Initializing users Alice, and alice")
-			bob, err = client.InitUser("Alice", defaultPassword)
-			Expect(err).To(BeNil())
-
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Getting user Alice.")
-			bob, err = client.GetUser("Alice", defaultPassword)
+		Specify("Custom Test: Testing Empty Password", func() {
+			userlib.DebugMsg("Initializing user alice")
+			alice, err = client.InitUser("alice", "")
 			Expect(err).To(BeNil())
 
 			userlib.DebugMsg("Getting user alice.")
-			alice, err = client.GetUser("alice", defaultPassword)
+			alice, err = client.GetUser("alice", "")
 			Expect(err).To(BeNil())
 		})
-	})
 
+		Specify("Custom Test: Testing Unique Usernames", func() {
+			userlib.DebugMsg("Initializing user alice")
+			alice, err = client.InitUser("alice", "")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user alice.")
+			alice, err = client.GetUser("alice", "")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initializing user alice")
+			alice, err = client.InitUser("alice", "")
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: Loggin in with Incorrect Password", func() {
+			userlib.DebugMsg("Initializing user alice")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user alice.")
+			alice, err = client.GetUser("alice", "")
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+	})
 })
