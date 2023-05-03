@@ -987,6 +987,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 
 	AXS_list := user_maps.SharedAccessPointMap[filename]
 	AXS_list = append(AXS_list, newAXS_id)
+	user_maps.SharedAccessPointMap[filename] = AXS_list
 
 	// re-store user_maps due to modifications
 	user_map_bytes, err := json.Marshal(user_maps)
@@ -1165,8 +1166,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
-	fmt.Println("finding user to revoke's accesspoint")
 	access_point_ids := user_maps.SharedAccessPointMap[filename]
+	fmt.Println(access_point_ids)
 	for i, val := range access_point_ids {
 		cur_axs_id := val
 		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
@@ -1181,7 +1182,6 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		if err != nil {
 			return err
 		}
-		fmt.Println("verification succeed")
 		var cur_AXS AccessPoint
 		err = json.Unmarshal(cur_axs, &cur_AXS)
 		if err != nil {
@@ -1191,13 +1191,12 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		if cur_AXS.User == recipientUsername {
 			access_point_ids = append(access_point_ids[:i], access_point_ids[i+1:]...)
 			userlib.DatastoreDelete(cur_axs_id)
+			fmt.Println("if statement reached")
+			fmt.Println(cur_axs_id)
 			break
 		}
 	}
-	fmt.Println("AAAAAAAAAAAAAA")
-	fmt.Println(access_point_ids)
 	user_maps.SharedAccessPointMap[filename] = access_point_ids
-	fmt.Println("accesspoint in question found")
 
 	// load file using old data (about to modify id and keys)
 	file_id := AXS.File_uuid
@@ -1409,6 +1408,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 
 	//  update remaining access points, re-encrypt re-sign and store
 	new_access_point_ids := user_maps.SharedAccessPointMap[filename]
+	fmt.Println(new_access_point_ids)
 	for _, val := range new_access_point_ids {
 		cur_axs_id := val
 		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
