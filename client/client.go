@@ -797,13 +797,13 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return
 	}
 	// get axs_id from UserAccessPointMap
-	fmt.Println(userdata.Username)
-	fmt.Println(filename)
+	// fmt.Println(userdata.Username)
+	// fmt.Println(filename)
 	axs_id := user_maps.UserAccessPointMap[filename]
-	fmt.Println(axs_id)
+	// fmt.Println(axs_id)
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
-	fmt.Println(AXSBytes)
+	// fmt.Println(AXSBytes)
 	fmt.Println(ok)
 	if !ok {
 		return
@@ -820,11 +820,11 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Println(AXS)
+	// fmt.Println(AXS)
 
 	// pull file from datastore
 	file_id := AXS.File_uuid
-	fmt.Println(file_id)
+	// fmt.Println(file_id)
 	file_sym_key := AXS.Sym_file_key
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
@@ -850,7 +850,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 	// load head node
 	head_id := file_struct.HeadNode_uuid
-	fmt.Println(head_id)
+	// fmt.Println(head_id)
 	encrypted_head_node, ok := userlib.DatastoreGet(head_id)
 	var HeadData NodeData
 	json.Unmarshal(encrypted_head_node, &HeadData)
@@ -980,7 +980,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 
 	AXS_list := user_maps.SharedAccessPointMap[filename]
 	AXS_list = append(AXS_list, newAXS_id)
-	user_maps.SharedAccessPointMap[filename] = AXS_list
+	  
 
 	// re-store user_maps due to modifications
 	user_map_bytes, err := json.Marshal(user_maps)
@@ -1137,6 +1137,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return nil
 	}
+	fmt.Println("AAAAAAAAAAAAAA")
 	// Load their access point and check that they’re the owner
 	axs_id := user_maps.UserAccessPointMap[filename]
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
@@ -1167,9 +1168,9 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			return nil
 		}
 		cur_AXS_decKey := user_maps.AccessPointDecryptMap[cur_axs_id]
-		fmt.Println(cur_AXS_decKey)
+		//fmt.Println(cur_AXS_decKey)
 		cur_AXS_verifyKey := user_maps.AccessPointVerifyMap[cur_axs_id]
-		fmt.Println(cur_AXS_verifyKey)
+		//fmt.Println(cur_AXS_verifyKey)
 		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
 		if err != nil {
 			return err
@@ -1187,6 +1188,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			break
 		}
 	}
+	fmt.Println("AAAAAAAAAAAAAA")
 	user_maps.SharedAccessPointMap[filename] = access_point_ids
 	fmt.Println("accesspoint in question found")
 
@@ -1203,6 +1205,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	json.Unmarshal(encrypted_file_struct, &RealData)
 	var verification_ds = RealData.FiledataSignature
 	var cipher = RealData.FiledataCipher
+	fmt.Println("AAAAAAAAAAAAAA")
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
 		return err
@@ -1217,6 +1220,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	// new enc dec key for file and its nodes
 	random_bytes := userlib.RandomBytes(16)
 	salt_bytes := userlib.RandomBytes(16)
+	fmt.Println("AAAAAAAAAAAAAA")
 	new_file_symKey := userlib.Argon2Key(random_bytes, salt_bytes, 16)
 	// generate DS pair for file and its nodes
 	new_file_signKey, new_file_verifyKey, err := userlib.DSKeyGen()
@@ -1240,6 +1244,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	var head_node Node
 	err = json.Unmarshal(plainhead, &head_node)
 	curr := head_node
+	fmt.Println("AAAAAAAAAAAAAA")
 	// iterate through
 	var old_next_id uuid.UUID
 	var new_next_id uuid.UUID
@@ -1254,12 +1259,12 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		// store current node in datastore
 		currNodeBytes, err := json.Marshal(curr)
 		if err != nil {
-			return nil
+			return err
 		}
 		var currnode_cipher = userlib.SymEnc(new_file_symKey, userlib.RandomBytes(16), currNodeBytes)
 		currode_signature, err := userlib.DSSign(new_file_signKey, currnode_cipher)
 		if err != nil {
-			return nil
+			return err
 		}
 		currnode_array := NodeData{
 			NodedataCiphertext: currnode_cipher,
@@ -1267,7 +1272,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		}
 		currnode_array_store, err := json.Marshal(currnode_array)
 		if err != nil {
-			return nil
+			return err
 		}
 		userlib.DatastoreSet(new_cur_id, currnode_array_store)
 		// load next node from datastore
@@ -1281,7 +1286,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		var next_cipher = NextData.NodedataCiphertext
 		err = userlib.DSVerify(file_verify_key, next_cipher, next_verification)
 		if err != nil {
-			return nil
+			return err
 		}
 		var plainnext = userlib.SymDec(file_sym_key, next_cipher)
 		var next_node Node
@@ -1302,7 +1307,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	var tail_cipher = TailData.NodedataCiphertext
 	err = userlib.DSVerify(file_verify_key, tail_cipher, tail_verification)
 	if err != nil {
-		return nil
+		return err
 	}
 	var plaintail = userlib.SymDec(file_sym_key, tail_cipher)
 	var tail_node Node
@@ -1311,12 +1316,12 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	// re-store tail node with new keys and id
 	newTailBytes, err := json.Marshal(tail_node)
 	if err != nil {
-		return nil
+		return err
 	}
 	var newTail_cipher = userlib.SymEnc(new_file_symKey, userlib.RandomBytes(16), newTailBytes)
 	newTail_sig, err := userlib.DSSign(new_file_signKey, newTail_cipher)
 	if err != nil {
-		return nil
+		return err
 	}
 	newTail_array := NodeData{
 		NodedataCiphertext: newTail_cipher,
@@ -1324,7 +1329,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 	newTail_array_store, err := json.Marshal(newTail_array)
 	if err != nil {
-		return nil
+		return err
 	}
 	userlib.DatastoreSet(new_tail_id, newTail_array_store)
 
