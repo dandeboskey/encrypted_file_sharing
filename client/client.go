@@ -797,10 +797,14 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return
 	}
 	// get axs_id from UserAccessPointMap
+	fmt.Println(userdata.Username)
+	fmt.Println(filename)
 	axs_id := user_maps.UserAccessPointMap[filename]
-
+	fmt.Println(axs_id)
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
+	fmt.Println(AXSBytes)
+	fmt.Println(ok)
 	if !ok {
 		return
 	}
@@ -816,9 +820,11 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	if err != nil {
 		return
 	}
+	fmt.Println(AXS)
 
 	// pull file from datastore
 	file_id := AXS.File_uuid
+	fmt.Println(file_id)
 	file_sym_key := AXS.Sym_file_key
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
@@ -844,6 +850,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 	// load head node
 	head_id := file_struct.HeadNode_uuid
+	fmt.Println(head_id)
 	encrypted_head_node, ok := userlib.DatastoreGet(head_id)
 	var HeadData NodeData
 	json.Unmarshal(encrypted_head_node, &HeadData)
@@ -1183,7 +1190,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	user_maps.SharedAccessPointMap[filename] = access_point_ids
 	fmt.Println("accesspoint in question found")
 
-	// 	generate new file id, decryption, and verification keys, re-encrypt re-sign and store file
+	// load file using old data (about to modify id and keys)
 	file_id := AXS.File_uuid
 	file_sym_key := AXS.Sym_file_key
 	file_verify_key := AXS.Verify_file_key
@@ -1207,9 +1214,9 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
+	// new enc dec key for file and its nodes
 	random_bytes := userlib.RandomBytes(16)
 	salt_bytes := userlib.RandomBytes(16)
-	// new enc dec key for file and its nodes
 	new_file_symKey := userlib.Argon2Key(random_bytes, salt_bytes, 16)
 	// generate DS pair for file and its nodes
 	new_file_signKey, new_file_verifyKey, err := userlib.DSKeyGen()
@@ -1341,8 +1348,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	userlib.DatastoreSet(new_file_id, file_array_store)
-	//  update owner's access point, re-encrypt re-sign and store
-	//newAXS_id := uuid.New()
+	//  update owner's access point, re-encrypt re-sign and store with same axs_id
+	userlib.DatastoreDelete(axs_id)
 	newAXS := AccessPoint{
 		User:            userdata.Username,
 		Owner:           userdata.Username,
@@ -1393,6 +1400,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		if err != nil {
 			return err
 		}
+		userlib.DatastoreDelete(cur_axs_id)
 		HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, cur_axs_id)
 	}
 	// re-store map struct
