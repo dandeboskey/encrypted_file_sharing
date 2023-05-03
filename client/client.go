@@ -198,12 +198,20 @@ type Invitation struct {
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username              string
-	Sym_user_key          []byte
-	User_uuid             uuid.UUID
-	Sign_user_key         userlib.PrivateKeyType
-	Dec_inv_key           userlib.PKEDecKey
-	Sign_inv_key          userlib.PrivateKeyType
+	Username       string
+	Sym_user_key   []byte
+	User_uuid      uuid.UUID
+	Sign_user_key  userlib.PrivateKeyType
+	Dec_inv_key    userlib.PKEDecKey
+	Sign_inv_key   userlib.PrivateKeyType
+	User_map_id    uuid.UUID
+	Enc_map_key    userlib.PKEEncKey
+	Dec_map_key    userlib.PKEDecKey
+	Sign_map_key   userlib.PrivateKeyType
+	Verify_map_key userlib.PublicKeyType
+}
+
+type UserMaps struct {
 	SharedAccessPointMap  map[string][]uuid.UUID
 	AccessPointEncryptMap map[string]userlib.PKEEncKey
 	AccessPointSignMap    map[string]userlib.PrivateKeyType
@@ -282,12 +290,30 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// put invitation verification key in keystore: hash(username + “_inv_verify”):Verify_inv_key
 	userlib.KeystoreSet(string(userlib.Hash([]byte(username+"_inv_verify"))), inv_verify_key)
 
-	userdata.SharedAccessPointMap = make(map[string][]uuid.UUID)
-	userdata.AccessPointEncryptMap = make(map[string]userlib.PKEEncKey)
-	userdata.AccessPointSignMap = make(map[string]userlib.PrivateKeyType)
-	userdata.UserAccessPointMap = make(map[string]uuid.UUID)
-	userdata.AccessPointDecryptMap = make(map[string]userlib.PKEDecKey)
-	userdata.AccessPointVerifyMap = make(map[string]userlib.PublicKeyType)
+	// set up user's maps
+	userdata.Enc_map_key, userdata.Dec_map_key, err = userlib.PKEKeyGen()
+	userdata.Sign_map_key, userdata.Verify_map_key, err = userlib.DSKeyGen()
+	userdata.User_map_id = uuid.New()
+
+	user_SharedAccessPointMap := make(map[string][]uuid.UUID)
+	user_AccessPointEncryptMap := make(map[string]userlib.PKEEncKey)
+	user_AccessPointSignMap := make(map[string]userlib.PrivateKeyType)
+	user_UserAccessPointMap := make(map[string]uuid.UUID)
+	user_AccessPointDecryptMap := make(map[string]userlib.PKEDecKey)
+	user_AccessPointVerifyMap := make(map[string]userlib.PublicKeyType)
+
+	user_maps := UserMaps{SharedAccessPointMap: user_SharedAccessPointMap,
+		AccessPointEncryptMap: user_AccessPointEncryptMap,
+		AccessPointSignMap:    user_AccessPointSignMap,
+		UserAccessPointMap:    user_UserAccessPointMap,
+		AccessPointDecryptMap: user_AccessPointDecryptMap,
+		AccessPointVerifyMap:  user_AccessPointVerifyMap,
+	}
+	user_map_bytes, err := json.Marshal(user_maps)
+	if err != nil {
+		return
+	}
+	HybridEncryptThenSign(userdata.Enc_map_key, userdata.Sign_map_key, user_map_bytes, userdata.User_map_id)
 
 	// symmetric encryption then signing user struct
 	userdata_bytes, err := json.Marshal(userdata)
@@ -389,15 +415,36 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	}
 
 	// store info in owner's maps
-	userdata.UserAccessPointMap[filename] = axs_id
-	userdata.AccessPointEncryptMap[filename] = AXS_RSA_encKey
-	userdata.AccessPointDecryptMap[filename] = AXS_RSA_decKey
-	userdata.AccessPointSignMap[filename] = AXS_DS_signKey
-	userdata.AccessPointVerifyMap[filename] = AXS_DS_verifyKey
+	// pull struct from datastore
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return nil
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return err
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return err
+	}
+	user_maps.UserAccessPointMap[filename] = axs_id
+	user_maps.AccessPointEncryptMap[filename] = AXS_RSA_encKey
+	user_maps.AccessPointDecryptMap[filename] = AXS_RSA_decKey
+	user_maps.AccessPointSignMap[filename] = AXS_DS_signKey
+	user_maps.AccessPointVerifyMap[filename] = AXS_DS_verifyKey
 
 	var AXS_list []uuid.UUID
 	AXS_list = append(AXS_list, axs_id)
-	userdata.SharedAccessPointMap[filename] = AXS_list
+	user_maps.SharedAccessPointMap[filename] = AXS_list
+	// re-store struct
+	user_map_bytes, err := json.Marshal(user_maps)
+	if err != nil {
+		return
+	}
+	HybridEncryptThenSign(userdata.Enc_map_key, userdata.Sign_map_key, user_map_bytes, userdata.User_map_id)
 
 	// create file struct
 	contentBytes, err := json.Marshal(content)
@@ -496,17 +543,31 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
+	// pull map struct -> we do not modify in this function so no need to re-store at the end
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return nil
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return err
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return err
+	}
 	// get axs_id from UserAccessPointMap
-	axs_id := userdata.UserAccessPointMap[filename]
-
+	axs_id := user_maps.UserAccessPointMap[filename]
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
 		return nil
 	}
 	// hybrid verify and decrypt the accesspoint
-	AXS_decKey := userdata.AccessPointDecryptMap[filename]
-	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+	AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
 		return err
@@ -531,12 +592,10 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	json.Unmarshal(encrypted_file_struct, &RealData)
 	var verification_ds = RealData.FiledataSignature
 	var cipher = RealData.FiledataCipher
-	fmt.Print("verifying file struct")
 	err = userlib.DSVerify(file_verify_key, cipher, verification_ds)
 	if err != nil {
 		return err
 	}
-	fmt.Print("file verification succeeded")
 	var plaintext = userlib.SymDec(file_sym_key, cipher)
 	var file_struct File_struct
 	// set file_struct to the unencrypted and verified file struct
@@ -555,12 +614,10 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		json.Unmarshal(encrypted_head_node, &HeadData)
 		headverification_ds := HeadData.NodedataSignature
 		headcipher := HeadData.NodedataCiphertext
-		fmt.Print("verifying head node")
 		err = userlib.DSVerify(file_verify_key, headcipher, headverification_ds)
 		if err != nil {
 			return err
 		}
-		fmt.Print("head node verification succeeded")
 		var plaintext = userlib.SymDec(file_sym_key, headcipher)
 		var head_node Node
 		// set head_node to the unencrypted and verified file struct
@@ -724,8 +781,23 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
+	// pull map struct -> we do not modify in this function so no need to re-store at the end
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return
+	}
 	// get axs_id from UserAccessPointMap
-	axs_id := userdata.UserAccessPointMap[filename]
+	axs_id := user_maps.UserAccessPointMap[filename]
 
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
@@ -733,8 +805,8 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return
 	}
 	// hybrid verify and decrypt the accesspoint
-	AXS_decKey := userdata.AccessPointDecryptMap[filename]
-	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+	AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
 		return
@@ -813,21 +885,35 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 }
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (invitationptr uuid.UUID, err error) {
+	// pull map struct
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return
+	}
 	// create random inv_id
 	inv_id := uuid.New()
 
 	// check if owner is calling the function to do this, check their access point and compare owner string
 	// get axs_id from UserAccessPointMap
-	axs_id := userdata.UserAccessPointMap[filename]
-
+	axs_id := user_maps.UserAccessPointMap[filename]
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
 		return
 	}
 	// hybrid verify and decrypt the accesspoint
-	AXS_decKey := userdata.AccessPointDecryptMap[filename]
-	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+	AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
 		return
@@ -855,6 +941,8 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		if err != nil {
 			return
 		}
+		invitationptr = inv_id
+		return invitationptr, err
 	}
 	// if owner calls function, have to create new accesspoint
 	newAXS_id := uuid.New()
@@ -877,15 +965,22 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return
 	}
 	// store info in owner's maps (id and the 4 keys)
-	userdata.UserAccessPointMap[filename] = newAXS_id
-	userdata.AccessPointEncryptMap[filename] = newAXS_RSA_encKey
-	userdata.AccessPointDecryptMap[filename] = newAXS_RSA_decKey
-	userdata.AccessPointSignMap[filename] = newAXS_DS_signKey
-	userdata.AccessPointVerifyMap[filename] = newAXS_DS_verifyKey
+	user_maps.UserAccessPointMap[filename] = newAXS_id
+	user_maps.AccessPointEncryptMap[filename] = newAXS_RSA_encKey
+	user_maps.AccessPointDecryptMap[filename] = newAXS_RSA_decKey
+	user_maps.AccessPointSignMap[filename] = newAXS_DS_signKey
+	user_maps.AccessPointVerifyMap[filename] = newAXS_DS_verifyKey
 
-	AXS_list := userdata.SharedAccessPointMap[filename]
+	AXS_list := user_maps.SharedAccessPointMap[filename]
 	AXS_list = append(AXS_list, newAXS_id)
-	userdata.SharedAccessPointMap[filename] = AXS_list
+	user_maps.SharedAccessPointMap[filename] = AXS_list
+
+	// re-store user_maps due to modifications
+	user_map_bytes, err := json.Marshal(user_maps)
+	if err != nil {
+		return
+	}
+	HybridEncryptThenSign(userdata.Enc_map_key, userdata.Sign_map_key, user_map_bytes, userdata.User_map_id)
 
 	// encrypt, sign, and store newAXS in Datastore
 	newAXSBytes, err := json.Marshal(newAXS)
@@ -938,10 +1033,26 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
+	invitationptr = inv_id
 	return invitationptr, err
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
+	// pull map struct
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return nil
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return nil
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return nil
+	}
 	// get invitation from datastore
 	inv_bytes, ok := userlib.DatastoreGet(invitationPtr)
 	if !ok {
@@ -966,9 +1077,16 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 	// store invitation data in user's maps
-	userdata.UserAccessPointMap[filename] = invite.AXS_uuid
-	userdata.AccessPointDecryptMap[filename] = invite.Dec_AXS_key
-	userdata.AccessPointVerifyMap[filename] = invite.Verify_AXS_key
+	user_maps.UserAccessPointMap[filename] = invite.AXS_uuid
+	user_maps.AccessPointDecryptMap[filename] = invite.Dec_AXS_key
+	user_maps.AccessPointVerifyMap[filename] = invite.Verify_AXS_key
+
+	// re-store user_maps
+	user_map_bytes, err := json.Marshal(user_maps)
+	if err != nil {
+		return nil
+	}
+	HybridEncryptThenSign(userdata.Enc_map_key, userdata.Sign_map_key, user_map_bytes, userdata.User_map_id)
 	// re-encrypt user struct with sym key, re-sign user struct with new DS pair, and overwrite verification key in keystore
 	// re-store user struct
 	DS_sign_key := userdata.Sign_user_key
@@ -997,14 +1115,29 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+	// pull map struct
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return nil
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return nil
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return nil
+	}
 	// Load their access point and check that they’re the owner
-	axs_id := userdata.UserAccessPointMap[filename]
+	axs_id := user_maps.UserAccessPointMap[filename]
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
 		return nil
 	}
-	AXS_decKey := userdata.AccessPointDecryptMap[filename]
-	AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+	AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+	AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
 	if err != nil {
 		return err
@@ -1018,15 +1151,15 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
-	access_point_ids := userdata.SharedAccessPointMap[filename]
+	access_point_ids := user_maps.SharedAccessPointMap[filename]
 	for i, val := range access_point_ids {
 		cur_axs_id := val
 		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
 		if !ok {
 			return nil
 		}
-		cur_AXS_decKey := userdata.AccessPointDecryptMap[filename]
-		cur_AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+		cur_AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+		cur_AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
 		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
 		if err != nil {
 			return err
@@ -1042,7 +1175,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			userlib.DatastoreDelete(cur_axs_id)
 		}
 	}
-	userdata.SharedAccessPointMap[filename] = access_point_ids
+	user_maps.SharedAccessPointMap[filename] = access_point_ids
 
 	// 	generate new file id, decryption, and verification keys, re-encrypt re-sign and store file
 	file_id := AXS.File_uuid
@@ -1217,20 +1350,20 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
-	AXS_encKey := userdata.AccessPointEncryptMap[filename]
-	AXS_signKey := userdata.AccessPointSignMap[filename]
+	AXS_encKey := user_maps.AccessPointEncryptMap[filename]
+	AXS_signKey := user_maps.AccessPointSignMap[filename]
 	HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, axs_id)
 
 	//  update remaining access points, re-encrypt re-sign and store
-	new_access_point_ids := userdata.SharedAccessPointMap[filename]
+	new_access_point_ids := user_maps.SharedAccessPointMap[filename]
 	for _, val := range new_access_point_ids {
 		cur_axs_id := val
 		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
 		if !ok {
 			return nil
 		}
-		cur_AXS_decKey := userdata.AccessPointDecryptMap[filename]
-		cur_AXS_verifyKey := userdata.AccessPointVerifyMap[filename]
+		cur_AXS_decKey := user_maps.AccessPointDecryptMap[filename]
+		cur_AXS_verifyKey := user_maps.AccessPointVerifyMap[filename]
 		cur_axs, err := HybridVerifyThenDecrypt(cur_AXS_decKey, cur_AXS_verifyKey, cur_axs_bytes, cur_axs_id)
 		if err != nil {
 			return err
@@ -1255,6 +1388,13 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		}
 		HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, cur_axs_id)
 	}
+	// re-store map struct
+	user_map_bytes, err := json.Marshal(user_maps)
+	if err != nil {
+		return nil
+	}
+	HybridEncryptThenSign(userdata.Enc_map_key, userdata.Sign_map_key, user_map_bytes, userdata.User_map_id)
+
 	// 	re-encrypt re-sign and store owner struct (map was modified)
 	DS_sign_key := userdata.Sign_user_key
 	if err != nil {
