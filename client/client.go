@@ -549,7 +549,6 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
-	fmt.Println(userdata.Username)
 	// pull map struct -> we do not modify in this function so no need to re-store at the end
 	map_id := userdata.User_map_id
 	map_bytes, ok := userlib.DatastoreGet(map_id)
@@ -567,24 +566,18 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	}
 	// get axs_id from UserAccessPointMap
 	axs_id := user_maps.UserAccessPointMap[filename]
-	fmt.Println(axs_id)
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
 		return errors.New("AXS bytes irretrievable")
 	}
-	fmt.Println(AXSBytes)
 	// hybrid verify and decrypt the accesspoint
 	AXS_decKey := user_maps.AccessPointDecryptMap[axs_id]
-	fmt.Println(AXS_decKey)
 	AXS_verifyKey := user_maps.AccessPointVerifyMap[axs_id]
-	fmt.Println(AXS_verifyKey)
 	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, axs_id)
-	fmt.Println("verifying axs")
 	if err != nil {
 		return err
 	}
-	fmt.Println("succeeded axs verification")
 	var AXS AccessPoint
 	err = json.Unmarshal(axs, &AXS)
 	if err != nil {
