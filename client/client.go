@@ -435,10 +435,10 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	user_maps.AccessPointDecryptMap[axs_id] = AXS_RSA_decKey
 	user_maps.AccessPointSignMap[axs_id] = AXS_DS_signKey
 	user_maps.AccessPointVerifyMap[axs_id] = AXS_DS_verifyKey
-
-	var AXS_list []uuid.UUID
-	AXS_list = append(AXS_list, axs_id)
-	user_maps.SharedAccessPointMap[filename] = AXS_list
+	// we are putting the owner's accesspoint in the shared map. we don't need to do this.
+	//var AXS_list []uuid.UUID
+	//AXS_list = append(AXS_list, axs_id)
+	//user_maps.SharedAccessPointMap[filename] = AXS_list
 	// re-store struct
 	user_map_bytes, err := json.Marshal(user_maps)
 	if err != nil {
@@ -547,7 +547,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	map_id := userdata.User_map_id
 	map_bytes, ok := userlib.DatastoreGet(map_id)
 	if !ok {
-		return nil
+		return errors.New("Map bytes irretrievable")
 	}
 	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
 	if err != nil {
@@ -563,7 +563,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	if !ok {
-		return nil
+		return errors.New("AXS bytes irretrievable")
 	}
 	// hybrid verify and decrypt the accesspoint
 	AXS_decKey := user_maps.AccessPointDecryptMap[axs_id]
@@ -585,7 +585,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
-		return err
+		return errors.New("File irretrievable")
 	}
 	// verify and decrypt file struct
 	var RealData FileData
@@ -607,7 +607,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 	if file_struct.HeadNode_uuid == file_struct.TailNode_uuid {
 		encrypted_head_node, ok := userlib.DatastoreGet(file_struct.HeadNode_uuid)
 		if !ok {
-			return err
+			return errors.New("Node bytes irretrievable")
 		}
 		// verify and decrypt file struct
 		var HeadData NodeData
@@ -694,7 +694,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 		oldtail_id := file_struct.TailNode_uuid
 		encrypted_tail_node, ok := userlib.DatastoreGet(file_struct.TailNode_uuid)
 		if !ok {
-			return err
+			return errors.New("Node bytes irretrievable")
 		}
 		// verify and decrypt file struct
 		var TailData NodeData
@@ -805,9 +805,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	// pull the accesspoint from datastore
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
 	// fmt.Println(AXSBytes)
-	fmt.Println(ok)
 	if !ok {
-		fmt.Println("i think i caught it")
 		return content, errors.New("AXS bytes irretrievable")
 	}
 	// hybrid verify and decrypt the accesspoint
@@ -831,7 +829,6 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
 	if !ok {
-		fmt.Println("i think i caught it")
 		return content, errors.New("file s irretrievable")
 	}
 	// verify and decrypt file struct
@@ -860,10 +857,8 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	json.Unmarshal(encrypted_head_node, &HeadData)
 	var head_verification = HeadData.NodedataSignature
 	var head_cipher = HeadData.NodedataCiphertext
-	fmt.Println(head_cipher)
 	err = userlib.DSVerify(file_verify_key, head_cipher, head_verification)
 	if err != nil {
-		fmt.Println("tren tren tren tren tren")
 		return content, err
 	}
 	var plainhead = userlib.SymDec(file_sym_key, head_cipher)
@@ -878,7 +873,6 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		next_id := curr.Next
 		encrypted_next_node, ok := userlib.DatastoreGet(next_id)
 		if !ok {
-			fmt.Println("i think i caught it")
 			return content, err
 		}
 		var NextData NodeData
@@ -979,7 +973,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return
 	}
 	// store info in owner's maps (id and the 4 keys)
-	user_maps.UserAccessPointMap[filename] = newAXS_id
+	user_maps.UserAccessPointMap[filename] = axs_id
 	user_maps.AccessPointEncryptMap[newAXS_id] = newAXS_RSA_encKey
 	user_maps.AccessPointDecryptMap[newAXS_id] = newAXS_RSA_decKey
 	user_maps.AccessPointSignMap[newAXS_id] = newAXS_DS_signKey
@@ -1144,7 +1138,6 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if err != nil {
 		return err
 	}
-	fmt.Println("AAAAAAAAAAAAAA")
 	// Load their access point and check that they’re the owner
 	axs_id := user_maps.UserAccessPointMap[filename]
 	AXSBytes, ok := userlib.DatastoreGet(axs_id)
@@ -1167,7 +1160,6 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
 	access_point_ids := user_maps.SharedAccessPointMap[filename]
-	fmt.Println(access_point_ids)
 	for i, val := range access_point_ids {
 		cur_axs_id := val
 		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
@@ -1191,8 +1183,6 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		if cur_AXS.User == recipientUsername {
 			access_point_ids = append(access_point_ids[:i], access_point_ids[i+1:]...)
 			userlib.DatastoreDelete(cur_axs_id)
-			fmt.Println("if statement reached")
-			fmt.Println(cur_axs_id)
 			break
 		}
 	}
@@ -1274,10 +1264,6 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 				NodedataCiphertext: currnode_cipher,
 				NodedataSignature:  currode_signature,
 			}
-			fmt.Println("head")
-			fmt.Println(currode_signature)
-			fmt.Println("cipher")
-			fmt.Println(currnode_cipher)
 			currnode_array_store, err := json.Marshal(currnode_array)
 			if err != nil {
 				return err
@@ -1404,11 +1390,12 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	AXS_encKey := user_maps.AccessPointEncryptMap[axs_id]
 	AXS_signKey := user_maps.AccessPointSignMap[axs_id]
 	err = HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, axs_id)
-	fmt.Println(err)
+	if err != nil {
+		return err
+	}
 
 	//  update remaining access points, re-encrypt re-sign and store
 	new_access_point_ids := user_maps.SharedAccessPointMap[filename]
-	fmt.Println(new_access_point_ids)
 	for _, val := range new_access_point_ids {
 		cur_axs_id := val
 		cur_axs_bytes, ok := userlib.DatastoreGet(cur_axs_id)
@@ -1477,6 +1464,5 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
-	fmt.Print("you made it to the end of revoke")
 	return err
 }
