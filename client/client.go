@@ -1366,7 +1366,8 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 	AXS_encKey := user_maps.AccessPointEncryptMap[axs_id]
 	AXS_signKey := user_maps.AccessPointSignMap[axs_id]
-	HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, axs_id)
+	err = HybridEncryptThenSign(AXS_encKey, AXS_signKey, axs_bytes, axs_id)
+	fmt.Println(err)
 
 	//  update remaining access points, re-encrypt re-sign and store
 	new_access_point_ids := user_maps.SharedAccessPointMap[filename]
