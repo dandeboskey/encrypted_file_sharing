@@ -782,13 +782,174 @@ var _ = Describe("Client Tests", func() {
 			Expect(content).To(Equal([]byte(contentOne + contentTwo)))
 		})
 
-		Specify("Custom Test: ", func() {
+		Specify("Nonexistent File", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+		
+		Specify("Nonexistent Recipient", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+		
+		Specify("Never shared with Recipient", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+
+		/** Specify("Shared then revoked then revoked invite never accepted", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		
+			_, err = alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+		
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		}) */
+		
+		Specify("Shared and accepted then revoked then revoked", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		
+			invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+		
+			err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
+			Expect(err).To(BeNil())
+		
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+		
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: Malicious Adversary Invites", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		
+			invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+		
+			userlib.DatastoreDelete(invitationPtr)
+			err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: Incorrect Invite Sequence", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+			charles, err := client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+			invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+			invitationPtr2, err := bob.CreateInvitation(aliceFile, "charles")
+			Expect(err).ToNot(BeNil())
+			err = charles.AcceptInvitation("bob", invitationPtr2, charlesFile)
+			Expect(err).ToNot(BeNil())
+			err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
+			Expect(err).To(BeNil())
+		})
+
+		Specify("User DNE", func() {
+			_, err := client.GetUser("alice", defaultPassword)
+			Expect(err).NotTo(BeNil())
+		})
+		
+		Specify("Invalid credentials", func() {
+			_, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			_, err = client.GetUser("alice", "passward")
+			Expect(err).NotTo(BeNil())
+		})
+		
+		Specify("Invalid credentials, empty password", func() {
+			_, err := client.GetUser("alice", emptyString)
+			Expect(err).NotTo(BeNil())
+		})
+		
+		Specify("Multiple sessions get", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			aliceLaptop, err := client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			aliceDesktop, err := client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			alicePhone, err := client.GetUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = aliceLaptop.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			content, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne)))
+		
+			content, err = aliceDesktop.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne)))
+		
+			content, err = alicePhone.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne)))
+		
+			err = aliceDesktop.AppendToFile(aliceFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+		
+			content, err = aliceLaptop.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne + contentTwo)))
+		
+			content, err = alicePhone.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne + contentTwo)))
 		})
 
 		Specify("Custom Test: ", func() {
-		})
-
-		Specify("Custom Test: ", func() {
+			
 		})
 	})
 })
