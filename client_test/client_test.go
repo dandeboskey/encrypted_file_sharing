@@ -830,7 +830,7 @@ var _ = Describe("Client Tests", func() {
 			err = alice.RevokeAccess(aliceFile, "bob")
 			Expect(err).ToNot(BeNil())
 		})
-
+		
 		Specify("Shared and accepted then revoked then revoked", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -949,6 +949,121 @@ var _ = Describe("Client Tests", func() {
 
 		Specify("Custom Test: ", func() {
 
+		})
+	})
+
+	Describe("RevokeAccess Tests", func() {
+		const fileName = "sharedFile.txt"
+	
+		Specify("Nonexistent File", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).NotTo(BeNil())
+		})
+	
+		Specify("Nonexistent Recipient", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			err = alice.StoreFile(fileName, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).NotTo(BeNil())
+		})
+	
+		Specify("Never shared with Recipient", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			err = alice.StoreFile(fileName, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).NotTo(BeNil())
+		})
+	
+		Specify("Shared then revoked then revoked (invite never accepted)", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			err = alice.StoreFile(fileName, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			_, err = alice.CreateInvitation(fileName, "bob")
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).ToNot(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+	
+		Specify("Shared and accepted then revoked then revoked", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			err = alice.StoreFile(fileName, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			invitationPtr, err := alice.CreateInvitation(fileName, "bob")
+			Expect(err).To(BeNil())
+	
+			err = bob.AcceptInvitation(alice.Username, invitationPtr, "bobFile.txt")
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+	
+		Specify("Perms Revoked Properly", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+	
+			err = alice.StoreFile(fileName, []byte(contentOne))
+			Expect(err).To(BeNil())
+	
+			invitationPtr, err := alice.CreateInvitation(fileName,"bob")
+			Expect(err).To(BeNil())
+	
+			err = bob.AcceptInvitation(alice.Username, invitationPtr, "bobFile.txt")
+			Expect(err).To(BeNil())
+	
+			err = alice.RevokeAccess(fileName, "bob")
+			Expect(err).To(BeNil())
+	
+			// Check if Bob can't LoadFile
+			_, err = bob.LoadFile("bobFile.txt")
+			Expect(err).NotTo(BeNil())
+	
+			// Check if Bob can't AppendToFile
+			err = bob.AppendToFile("bobFile.txt", []byte(contentTwo))
+			Expect(err).NotTo(BeNil())
+	
+			// Check if Bob can't CreateInvitation
+			_, err = bob.CreateInvitation("bobFile.txt", "charles")
+			Expect(err).NotTo(BeNil())
 		})
 	})
 })
