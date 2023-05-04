@@ -250,6 +250,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if username == "" {
 		return userdataptr, errors.New("empty username")
 	}
+	if password == "" {
+		return userdataptr, errors.New("empty password")
+	}
 	var password_bytes, salt_bytes []byte
 	password_bytes, err = json.Marshal(userlib.Hash([]byte(username + password)))
 	if err != nil {
