@@ -250,7 +250,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if username == "" {
 		return userdataptr, errors.New("empty username")
 	}
-	userdata.Username = username
 	var password_bytes, salt_bytes []byte
 	password_bytes, err = json.Marshal(userlib.Hash([]byte(username + password)))
 	if err != nil {
@@ -260,6 +259,28 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return userdataptr, err
 	}
+	// checking for duplicate username
+	temp, err := json.Marshal(username)
+	if err != nil {
+		return userdataptr, err
+	}
+	temp2 := userlib.Argon2Key(temp, salt_bytes, 16)
+	unique_username, err := uuid.FromBytes(temp2)
+	if err != nil {
+		return userdataptr, err
+	}
+	_, ok := userlib.DatastoreGet(unique_username)
+	if ok {
+		return userdataptr, errors.New("user already exists with specified username")
+	} else {
+		temp3, err := json.Marshal(true)
+		if err != nil {
+			return userdataptr, err
+		}
+		temp3_cipher := userlib.SymEnc(userlib.RandomBytes(16), userlib.RandomBytes(16), temp3)
+		userlib.DatastoreSet(unique_username, temp3_cipher)
+	}
+	userdata.Username = username
 	// generate sym_user_key
 	userdata.Sym_user_key = userlib.Argon2Key(password_bytes, salt_bytes, 16)
 	// generate uuid from rootkey
@@ -339,27 +360,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return userdataptr, err
 	}
-	// checking for duplicate username
-	temp, err := json.Marshal(username)
-	if err != nil {
-		return userdataptr, err
-	}
-	temp2 := userlib.Argon2Key(temp, salt_bytes, 16)
-	unique_username, err := uuid.FromBytes(temp2)
-	if err != nil {
-		return userdataptr, err
-	}
-	_, ok := userlib.DatastoreGet(unique_username)
-	if ok {
-		return userdataptr, errors.New("user already exists with specified username")
-	} else {
-		temp3, err := json.Marshal(true)
-		if err != nil {
-			return userdataptr, err
-		}
-		temp3_cipher := userlib.SymEnc(userlib.RandomBytes(16), userlib.RandomBytes(16), temp3)
-		userlib.DatastoreSet(unique_username, temp3_cipher)
-	}
+	
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
 	return userdataptr, nil
 }

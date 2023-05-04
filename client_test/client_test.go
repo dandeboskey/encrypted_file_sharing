@@ -398,6 +398,96 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
+		Specify("Custom Test: Grandchild Revoke", func() {
+			userlib.DebugMsg("Initializing user alice")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initializing user bob")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice Invite Bob")
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob accepting invite from Alice under filename %s.", aliceFile)
+			err = bob.AcceptInvitation("alice", invite, aliceFile)
+			Expect(err).To(BeNil())
+
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob Invite Charles")
+			invite, err = bob.CreateInvitation(aliceFile, "charles")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Charles accepting invite from Bob under filename %s.", aliceFile)
+			err = charles.AcceptInvitation("bob", invite, aliceFile)
+			Expect(err).To(BeNil())
+
+			doris, err = client.InitUser("doris", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Charles Invite Doris")
+			invite, err = bob.CreateInvitation(aliceFile, "doris")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice Revoke Access to Bob")
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob can't load file")
+			_, err = bob.LoadFile(aliceFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Bob can't append")
+			err = bob.AppendToFile(aliceFile, []byte(contentTwo))
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Bob can't Invite Charles")
+			invite, err = bob.CreateInvitation(aliceFile, "charles")
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Charles can't load file")
+			_, err = charles.LoadFile(aliceFile)
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Charles can't append")
+			err = charles.AppendToFile(aliceFile, []byte(contentTwo))
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Charles can't Invite Doris")
+			invite, err = charles.CreateInvitation(aliceFile, "doris")
+			Expect(err).ToNot(BeNil())
+
+			userlib.DebugMsg("Doris can't accept invite")
+			err = doris.AcceptInvitation("charles", invite, aliceFile)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: duplicate users", func() {
+			userlib.DebugMsg("init alice")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			userlib.DebugMsg("init alice")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
+		Specify("Custom Test: ", func() {
+		})
+
 		Specify("Custom Test: ", func() {
 		})
 
