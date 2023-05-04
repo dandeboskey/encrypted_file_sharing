@@ -493,6 +493,9 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Storing empty file")
 			err = alice.StoreFile(aliceFile, []byte{})
 			Expect(err).To(BeNil())
+
+			err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil());
 		})
 
 		Specify("Custom test: should support case-sensitive usernames", func() {
