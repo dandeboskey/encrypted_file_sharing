@@ -235,6 +235,10 @@ type NodeData struct {
 	NodedataSignature  []byte
 }
 
+type FileUsers struct {
+	FileUsersCiphertext []byte
+}
+
 // You can add other attributes here if you want! But note that in order for attributes to
 // be included when this struct is serialized to/from JSON, they must be capitalized.
 // On the flipside, if you have an attribute that you want to be able to access from
@@ -640,6 +644,35 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return err
 	}
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
+
+	// for revoke access, to check if invitation was accepted
+	file_users := []string{}
+	file_users = append(file_users, userdata.Username)
+	file_users_bytes, err := json.Marshal(file_users)
+	if err != nil {
+		return err
+	}
+	file_users_password_bytes, err := json.Marshal(file_id)
+	if err != nil {
+		return err
+	}
+	file_users_salt_bytes, err := json.Marshal(1) // salt = 1 for determinism
+	if err != nil {
+		return err
+	}
+	file_users_sym_key := userlib.Argon2Key(file_users_password_bytes, file_users_salt_bytes, 16)
+	file_users_uuid, err := uuid.FromBytes(file_users_sym_key)
+	if err != nil {
+		return err
+	}
+	file_users_cipher := userlib.SymEnc(file_users_sym_key, userlib.RandomBytes(16), file_users_bytes)
+	file_users_array := FileUsers{
+		FileUsersCiphertext: file_users_cipher}
+	file_users_array_store, err := json.Marshal(file_users_array)
+	if err != nil {
+		return err
+	}
+	userlib.DatastoreSet(file_users_uuid, file_users_array_store)
 	return err
 }
 
@@ -1193,6 +1226,71 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	user_maps.AccessPointDecryptMap[invite.AXS_uuid] = invite.Dec_AXS_key
 	user_maps.AccessPointVerifyMap[invite.AXS_uuid] = invite.Verify_AXS_key
 
+	// load AXS to get file_id
+	AXSBytes, ok := userlib.DatastoreGet(invite.AXS_uuid)
+	if !ok {
+		return errors.New("AXS bytes irretrievable")
+	}
+	AXS_decKey := user_maps.AccessPointDecryptMap[invite.AXS_uuid]
+	AXS_verifyKey := user_maps.AccessPointVerifyMap[invite.AXS_uuid]
+	axs, err := HybridVerifyThenDecrypt(AXS_decKey, AXS_verifyKey, AXSBytes, invite.AXS_uuid)
+	if err != nil {
+		return err
+	}
+	var AXS AccessPoint
+	err = json.Unmarshal(axs, &AXS)
+	if err != nil {
+		return err
+	}
+	file_id := AXS.File_uuid
+	// add recipient to file_users struct in datastore
+	file_users_password_bytes, err := json.Marshal(file_id)
+	if err != nil {
+		return err
+	}
+	file_users_salt_bytes, err := json.Marshal(1) // salt = 1 for determinism
+	if err != nil {
+		return err
+	}
+	file_users_sym_key := userlib.Argon2Key(file_users_password_bytes, file_users_salt_bytes, 16)
+	file_users_uuid, err := uuid.FromBytes(file_users_sym_key)
+	file_users_bytes, ok := userlib.DatastoreGet(file_users_uuid)
+	// verify that file_users exists in datastore
+	if !ok {
+		return errors.New("file_users not in datastore")
+	}
+	// pull encrypted file_users struct from datastore
+	var file_users_data FileUsers
+	err = json.Unmarshal(file_users_bytes, &file_users_data)
+	if err != nil {
+		return err
+	}
+	// decrypt file_users struct
+	cipher := file_users_data.FileUsersCiphertext
+	var plaintext = userlib.SymDec(file_users_sym_key, cipher)
+	var file_users []string
+	err = json.Unmarshal(plaintext, &file_users)
+	if err != nil {
+		return err
+	}
+	file_users = append(file_users, userdata.Username)
+	// re-encrypt and re-store in datastore
+	file_users_bytes, err = json.Marshal(file_users)
+	if err != nil {
+		return err
+	}
+	file_users_cipher := userlib.SymEnc(file_users_sym_key, userlib.RandomBytes(16), file_users_bytes)
+	if err != nil {
+		return err
+	}
+	file_users_array := FileUsers{
+		FileUsersCiphertext: file_users_cipher}
+	file_users_array_store, err := json.Marshal(file_users_array)
+	if err != nil {
+		return err
+	}
+	userlib.DatastoreSet(file_users_uuid, file_users_array_store)
+
 	// re-store user_maps
 	user_map_bytes, err := json.Marshal(user_maps)
 	if err != nil {
@@ -1269,6 +1367,46 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if AXS.Owner != userdata.Username {
 		return err
 	}
+	file_id := AXS.File_uuid
+	// check if recipientUser accepted invite
+	file_users_password_bytes, err := json.Marshal(file_id)
+	if err != nil {
+		return err
+	}
+	file_users_salt_bytes, err := json.Marshal(1) // salt = 1 for determinism
+	if err != nil {
+		return err
+	}
+	file_users_sym_key := userlib.Argon2Key(file_users_password_bytes, file_users_salt_bytes, 16)
+	file_users_uuid, err := uuid.FromBytes(file_users_sym_key)
+	file_users_bytes, ok := userlib.DatastoreGet(file_users_uuid)
+	// verify that file_users exists in datastore
+	if !ok {
+		return errors.New("file_users not in datastore")
+	}
+	// pull encrypted file_users struct from datastore
+	var file_users_data FileUsers
+	err = json.Unmarshal(file_users_bytes, &file_users_data)
+	if err != nil {
+		return err
+	}
+	// decrypt file_users struct
+	file_users_cipher := file_users_data.FileUsersCiphertext
+	file_users_plaintext := userlib.SymDec(file_users_sym_key, file_users_cipher)
+	var file_users []string
+	err = json.Unmarshal(file_users_plaintext, &file_users)
+	if err != nil {
+		return err
+	}
+	check := false
+	for _, val := range file_users {
+		if val == recipientUsername {
+			check = true
+		}
+	}
+	if check == false {
+		return errors.New("cannot revoke access on user")
+	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
 	removed := false
 	access_point_ids := user_maps.SharedAccessPointMap[filename]
@@ -1303,7 +1441,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	user_maps.SharedAccessPointMap[filename] = access_point_ids
 
 	// load file using old data (about to modify id and keys)
-	file_id := AXS.File_uuid
+	file_id = AXS.File_uuid
 	file_sym_key := AXS.Sym_file_key
 	file_verify_key := AXS.Verify_file_key
 	encrypted_file_struct, ok := userlib.DatastoreGet(file_id)
