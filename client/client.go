@@ -1432,6 +1432,29 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			access_point_ids = append(access_point_ids[:i], access_point_ids[i+1:]...)
 			userlib.DatastoreDelete(cur_axs_id)
 			removed = true
+			// also remove from file_users share list
+			for j, u := range file_users {
+				if u == recipientUsername {
+					file_users = append(file_users[:j], file_users[j+1:]...)
+					break
+				}
+			}
+			// re-store file_users in datastore
+			file_users_bytes, err = json.Marshal(file_users)
+			if err != nil {
+				return err
+			}
+			file_users_cipher := userlib.SymEnc(file_users_sym_key, userlib.RandomBytes(16), file_users_bytes)
+			if err != nil {
+				return err
+			}
+			file_users_array := FileUsers{
+				FileUsersCiphertext: file_users_cipher}
+			file_users_array_store, err := json.Marshal(file_users_array)
+			if err != nil {
+				return err
+			}
+			userlib.DatastoreSet(file_users_uuid, file_users_array_store)
 			break
 		}
 	}
