@@ -495,10 +495,6 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 		})
 
-		Specify("Custom Test: nonexistent file", func() {
-
-		})
-
 		Specify("Custom test: should support case-sensitive usernames", func() {
 			alice1, err1 := client.InitUser("alice", defaultPassword)
 			Expect(err1).To(BeNil())
@@ -620,30 +616,30 @@ var _ = Describe("Client Tests", func() {
 			invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
 			Expect(err).To(BeNil())
 	
-			err = bob.AcceptInvitation("alice", invitationPtr, aliceFile)
+			err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
 			Expect(err).To(BeNil())
 	
-			invitationPtr, err = bob.CreateInvitation(aliceFile, "charles")
+			invitationPtr, err = bob.CreateInvitation(bobFile, "charles")
 			Expect(err).To(BeNil())
 	
-			err = charles.AcceptInvitation("bob", invitationPtr, aliceFile)
+			err = charles.AcceptInvitation("bob", invitationPtr, charlesFile)
 			Expect(err).To(BeNil())
 	
 			err = alice.StoreFile(aliceFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 	
-			content, err := bob.LoadFile(aliceFile)
+			content, err := bob.LoadFile(bobFile)
 			Expect(err).To(BeNil())
 			Expect(content).To(Equal([]byte(contentTwo)))
 	
-			content, err = charles.LoadFile(aliceFile)
+			content, err = charles.LoadFile(charlesFile)
 			Expect(err).To(BeNil())
 			Expect(content).To(Equal([]byte(contentTwo)))
 	
-			err = bob.StoreFile(aliceFile, []byte(contentThree))
+			err = bob.StoreFile(bobFile, []byte(contentThree))
 			Expect(err).To(BeNil())
 	
-			content, err = charles.LoadFile(aliceFile)
+			content, err = charles.LoadFile(charlesFile)
 			Expect(err).To(BeNil())
 			Expect(content).To(Equal([]byte(contentThree)))
 	
@@ -654,39 +650,133 @@ var _ = Describe("Client Tests", func() {
 			err = alice.AppendToFile(aliceFile, []byte(contentOne))
 			Expect(err).To(BeNil())
 	
-			err = bob.AppendToFile(aliceFile, []byte(contentTwo))
+			err = bob.AppendToFile(bobFile, []byte(contentTwo))
 			Expect(err).To(BeNil())
 	
-			err = charles.AppendToFile(aliceFile, []byte(contentThree))
+			err = charles.AppendToFile(charlesFile, []byte(contentThree))
 			Expect(err).To(BeNil())
 	
 			content, err = alice.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
-			Expect(content).To(Equal([]byte(contentThree + contentOne)))
+			Expect(content).To(Equal([]byte(contentThree + contentOne + contentTwo + contentThree)))
 	
-			content, err = bob.LoadFile(aliceFile)
+			content, err = bob.LoadFile(bobFile)
 			Expect(err).To(BeNil())
-			Expect(content).To(Equal([]byte(contentThree + contentTwo)))
+			Expect(content).To(Equal([]byte(contentThree + contentOne + contentTwo + contentThree)))
 	
-			content, err = charles.LoadFile(aliceFile)
+			content, err = charles.LoadFile(charlesFile)
 			Expect(err).To(BeNil())
-			Expect(content).To(Equal([]byte(contentThree + contentThree)))
+			Expect(content).To(Equal([]byte(contentThree + contentOne + contentTwo + contentThree)))
 	
 			david, err := client.InitUser("david", defaultPassword)
 			Expect(err).To(BeNil())
 	
-			invitationPtr, err = charles.CreateInvitation(aliceFile, "david")
+			invitationPtr, err = charles.CreateInvitation(charlesFile, "david")
 			Expect(err).To(BeNil())
 	
-			err = david.AcceptInvitation("charles", invitationPtr, aliceFile)
+			err = david.AcceptInvitation("charles", invitationPtr, "davidFile")
 			Expect(err).To(BeNil())
 	
-			content, err = david.LoadFile(aliceFile)
+			content, err = david.LoadFile("davidFile")
 			Expect(err).To(BeNil())
-			Expect(content).To(Equal([]byte(contentThree + contentThree)))
+			Expect(content).To(Equal([]byte(contentThree + contentOne + contentTwo + contentThree)))
 		})
 
-		Specify("Custom Test: ", func() {
+		Specify("Nonexistent File", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			_, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			_, err = alice.CreateInvitation("nonexistentFile", "bob")
+			Expect(err).NotTo(BeNil())
+		})
+		
+		Specify("Nonexistent Recipient", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		
+			_, err = alice.CreateInvitation(aliceFile, "nonexistentBob")
+			Expect(err).NotTo(BeNil())
+		})
+		
+		Specify("Nonexistent Both", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+		
+			_, err = alice.CreateInvitation("nonexistentFile", "nonexistentBob")
+			Expect(err).NotTo(BeNil())
+		})
+
+		Specify("Custom Test: sharing permissions", func() {
+			alice, err := client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			bob, err := client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+			charles, err := client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			err = bob.AcceptInvitation("alice", invitationPtr, "bobFile")
+			Expect(err).To(BeNil())
+
+			content, err := bob.LoadFile("bobFile")
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne)))
+
+			err = bob.StoreFile("bobFile", []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			content, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentTwo)))
+
+			err = bob.AppendToFile("bobFile", []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			content, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentTwo + contentThree)))
+
+			invitationPtr, err = bob.CreateInvitation("bobFile", "charles")
+			Expect(err).To(BeNil())
+
+			err = charles.AcceptInvitation("bob", invitationPtr, "charlesFile")
+			Expect(err).To(BeNil())
+
+			content, err = charles.LoadFile("charlesFile")
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentTwo + contentThree)))
+
+			err = charles.StoreFile("charlesFile", []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			content, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne)))
+
+			content, err = bob.LoadFile("bobFile")
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne)))
+
+			err = charles.AppendToFile("charlesFile", []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			content, err = alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne + contentTwo)))
+
+			content, err = bob.LoadFile("bobFile")
+			Expect(err).To(BeNil())
+			Expect(content).To(Equal([]byte(contentOne + contentTwo)))
 		})
 
 		Specify("Custom Test: ", func() {
