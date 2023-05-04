@@ -952,6 +952,129 @@ var _ = Describe("Client Tests", func() {
 		})
 	})
 
+	Describe("AcceptInvitation", func() {
+		var (
+			aliceFile = "aliceFile.txt"
+			bobFile   = "bobFile.txt"
+		)
+	
+		BeforeEach(func() {
+			userlib.DatastoreClear()
+			userlib.KeystoreClear()
+		})
+
+		Describe("AppendToFile", func() {
+			var (
+				aliceFile = "aliceFile.txt"
+				bobFile   = "bobFile.txt"
+			)
+		
+			BeforeEach(func() {
+				userlib.DatastoreClear()
+				userlib.KeystoreClear()
+			})
+		
+			Describe("Appending to a file", func() {
+				It("Should append content to an existing file", func() {
+					alice, _ := client.InitUser("alice", defaultPassword)
+					alice.StoreFile(aliceFile, []byte(contentOne))
+		
+					// Alice appends content to her file
+					err := alice.AppendToFile(aliceFile, []byte(contentTwo))
+					Expect(err).To(BeNil())
+		
+					// Check if the content is appended correctly
+					content, err := alice.LoadFile(aliceFile)
+					Expect(err).To(BeNil())
+					Expect(content).To(Equal([]byte(contentOne + contentTwo)))
+				})
+		
+				It("Should fail if the file does not exist in the caller's namespace", func() {
+					alice, _ := client.InitUser("alice", defaultPassword)
+		
+					// Alice tries to append to a nonexistent file
+					err := alice.AppendToFile(aliceFile, []byte(contentTwo))
+					Expect(err).NotTo(BeNil())
+				})
+		
+				It("Should append empty content to an existing file", func() {
+					alice, _ := client.InitUser("alice", defaultPassword)
+					alice.StoreFile(aliceFile, []byte(contentOne))
+		
+					// Alice appends empty content to her file
+					err := alice.AppendToFile(aliceFile, []byte{})
+					Expect(err).To(BeNil())
+		
+					// Check if the content is unchanged
+					content, err := alice.LoadFile(aliceFile)
+					Expect(err).To(BeNil())
+					Expect(content).To(Equal([]byte(contentOne)))
+				})
+		
+				It("Should allow appending to a shared file", func() {
+					alice, _ := client.InitUser("alice", defaultPassword)
+					bob, _ := client.InitUser("bob", defaultPassword)
+					alice.StoreFile(aliceFile, []byte(contentOne))
+		
+					// Alice shares the file with Bob
+					invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+					Expect(err).To(BeNil())
+					err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
+					Expect(err).To(BeNil())
+		
+					// Bob appends content to the shared file
+					err = bob.AppendToFile(bobFile, []byte(contentTwo))
+					Expect(err).To(BeNil())
+		
+					// Check if the content is appended correctly for both Alice and Bob
+					aliceContent, err := alice.LoadFile(aliceFile)
+					Expect(err).To(BeNil())
+					Expect(aliceContent).To(Equal([]byte(contentOne + contentTwo)))
+		
+					bobContent, err := bob.LoadFile(bobFile)
+					Expect(err).To(BeNil())
+					Expect(bobContent).To(Equal([]byte(contentOne + contentTwo)))
+				})
+			})
+		})
+		
+		Describe("Accepting an invitation", func() {
+			It("Should accept a valid invitation", func() {
+				alice, _ := client.InitUser("alice", defaultPassword)
+				bob, _ := client.InitUser("bob", defaultPassword)
+				alice.StoreFile(aliceFile, []byte(contentOne))
+	
+				// Alice creates and shares an invitation with Bob
+				invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+				Expect(err).To(BeNil())
+	
+				// Bob accepts the invitation and assigns the shared file a name in his personal namespace
+				err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
+				Expect(err).To(BeNil())
+	
+				// Check if Bob can LoadFile after accepting the invitation
+				content, err := bob.LoadFile(bobFile)
+				Expect(err).To(BeNil())
+				Expect(content).To(Equal([]byte(contentOne)))
+			})
+	
+			It("Should fail if the filename is already taken in the recipient's namespace", func() {
+				alice, _ := client.InitUser("alice", defaultPassword)
+				bob, _ := client.InitUser("bob", defaultPassword)
+				alice.StoreFile(aliceFile, []byte(contentOne))
+				bob.StoreFile(bobFile, []byte(contentTwo))
+	
+				// Alice creates and shares an invitation with Bob
+				invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
+				Expect(err).To(BeNil())
+	
+				// Bob tries to accept the invitation with a filename that already exists in his namespace
+				err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
+				Expect(err).NotTo(BeNil())
+			})
+		})
+	})
+
 	Describe("RevokeAccess Tests", func() {
 		const fileName = "sharedFile.txt"
 	
