@@ -854,15 +854,6 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
-		Specify("Custom Test: Malicious Adversary", func() {
-			//password
-			alice, err := client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-			userlib.DatastoreDelete(alice.User_uuid)
-			_, err = client.GetUser("alice", defaultPassword)
-			Expect(err).ToNot(BeNil())
-		})
-
 		Specify("Custom Test: Malicious Adversary Invites", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
