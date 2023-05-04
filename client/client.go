@@ -1270,6 +1270,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		return err
 	}
 	// Go to the user that you’re trying to revoke and get their access point from the map
+	removed := false
 	access_point_ids := user_maps.SharedAccessPointMap[filename]
 	for i, val := range access_point_ids {
 		cur_axs_id := val
@@ -1292,8 +1293,12 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		if cur_AXS.User == recipientUsername {
 			access_point_ids = append(access_point_ids[:i], access_point_ids[i+1:]...)
 			userlib.DatastoreDelete(cur_axs_id)
+			removed = true
 			break
 		}
+	}
+	if removed == false {
+		return errors.New("user cannot be revoked")
 	}
 	user_maps.SharedAccessPointMap[filename] = access_point_ids
 
