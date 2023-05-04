@@ -363,7 +363,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if err != nil {
 		return userdataptr, err
 	}
-	
+
 	userlib.DatastoreSet(userdata.User_uuid, user_array_store)
 	return userdataptr, nil
 }
@@ -419,6 +419,105 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
+	// pull struct from datastore
+	map_id := userdata.User_map_id
+	map_bytes, ok := userlib.DatastoreGet(map_id)
+	if !ok {
+		return errors.New("cannot access map_bytes")
+	}
+	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
+	if err != nil {
+		return err
+	}
+	var user_maps UserMaps
+	err = json.Unmarshal(map_struct, &user_maps)
+	if err != nil {
+		return err
+	}
+
+	// check if file already exists, if so, overwrite
+	old_axs_id, ok := user_maps.UserAccessPointMap[filename]
+	if ok {
+		// load access point
+		OldAXSBytes, ok := userlib.DatastoreGet(old_axs_id)
+		if !ok {
+			return errors.New("AXS bytes irretrievable")
+		}
+		// hybrid verify and decrypt the accesspoint
+		OldAXS_decKey := user_maps.AccessPointDecryptMap[old_axs_id]
+		OldAXS_verifyKey := user_maps.AccessPointVerifyMap[old_axs_id]
+		var old_axs []byte
+		old_axs, err = HybridVerifyThenDecrypt(OldAXS_decKey, OldAXS_verifyKey, OldAXSBytes, old_axs_id)
+		if err != nil {
+			return err
+		}
+		var OldAXS AccessPoint
+		err = json.Unmarshal(old_axs, &OldAXS)
+		if err != nil {
+			return err
+		}
+		// create head node and file struct
+		var contentBytes []byte
+		contentBytes, err = json.Marshal(content)
+		if err != nil {
+			return err
+		}
+		var numBytes int
+		numBytes = len(contentBytes)
+		head_id := uuid.New()
+
+		headnode := Node{Contents: content, Next: head_id, End: true}
+		FileStruct := File_struct{HeadNode_uuid: head_id, TailNode_uuid: head_id, Num_bytes: numBytes}
+
+		// store head node and file struct with keys from access point
+		old_file_id := OldAXS.File_uuid
+		old_sym_key := OldAXS.Sym_file_key
+		old_sign_key := OldAXS.Sign_file_key
+		var HeadNodeBytes []byte
+		HeadNodeBytes, err = json.Marshal(headnode)
+		if err != nil {
+			return err
+		}
+		var headnode_cipher = userlib.SymEnc(old_sym_key, userlib.RandomBytes(16), HeadNodeBytes)
+		var headnode_signature []byte
+		headnode_signature, err = userlib.DSSign(old_sign_key, headnode_cipher)
+		if err != nil {
+			return err
+		}
+		headnode_array := NodeData{
+			NodedataCiphertext: headnode_cipher,
+			NodedataSignature:  headnode_signature,
+		}
+		var headnode_array_store []byte
+		headnode_array_store, err = json.Marshal(headnode_array)
+		if err != nil {
+			return
+		}
+		userlib.DatastoreSet(head_id, headnode_array_store)
+
+		// store file struct after encrypting with symmetric key and signing with DS key
+		FileBytes, err := json.Marshal(FileStruct)
+		if err != nil {
+			return err
+		}
+		var filedata_cipher = userlib.SymEnc(old_sym_key, userlib.RandomBytes(16), FileBytes)
+		filedata_signature, err := userlib.DSSign(old_sign_key, filedata_cipher)
+		if err != nil {
+			return err
+		}
+		file_array := FileData{
+			FiledataCipher:    filedata_cipher,
+			FiledataSignature: filedata_signature,
+		}
+		file_array_store, err := json.Marshal(file_array)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(old_file_id, file_array_store)
+		// return
+		return err
+	}
+
 	// generate random file uuid
 	file_id := uuid.New()
 	// generate random accesspoint uuid
@@ -446,21 +545,6 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	}
 
 	// store info in owner's maps
-	// pull struct from datastore
-	map_id := userdata.User_map_id
-	map_bytes, ok := userlib.DatastoreGet(map_id)
-	if !ok {
-		return errors.New("cannot access map_bytes")
-	}
-	map_struct, err := HybridVerifyThenDecrypt(userdata.Dec_map_key, userdata.Verify_map_key, map_bytes, map_id)
-	if err != nil {
-		return err
-	}
-	var user_maps UserMaps
-	err = json.Unmarshal(map_struct, &user_maps)
-	if err != nil {
-		return err
-	}
 	user_maps.UserAccessPointMap[filename] = axs_id
 	user_maps.AccessPointEncryptMap[axs_id] = AXS_RSA_encKey
 	user_maps.AccessPointDecryptMap[axs_id] = AXS_RSA_decKey
