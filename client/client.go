@@ -253,6 +253,10 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if password == "" {
 		return userdataptr, errors.New("empty password")
 	}
+	_, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(username + "_user_verify"))))
+	if ok {
+		return userdataptr, errors.New("user with specified username already exists")
+	}
 	var password_bytes, salt_bytes []byte
 	password_bytes, err = json.Marshal(userlib.Hash([]byte(username + password)))
 	if err != nil {
@@ -261,27 +265,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	salt_bytes, err = json.Marshal(1) // salt = 1 for determinism
 	if err != nil {
 		return userdataptr, err
-	}
-	// checking for duplicate username
-	temp, err := json.Marshal(username)
-	if err != nil {
-		return userdataptr, err
-	}
-	temp2 := userlib.Argon2Key(temp, salt_bytes, 16)
-	unique_username, err := uuid.FromBytes(temp2)
-	if err != nil {
-		return userdataptr, err
-	}
-	_, ok := userlib.DatastoreGet(unique_username)
-	if ok {
-		return userdataptr, errors.New("user already exists with specified username")
-	} else {
-		temp3, err := json.Marshal(true)
-		if err != nil {
-			return userdataptr, err
-		}
-		temp3_cipher := userlib.SymEnc(userlib.RandomBytes(16), userlib.RandomBytes(16), temp3)
-		userlib.DatastoreSet(unique_username, temp3_cipher)
 	}
 	userdata.Username = username
 	// generate sym_user_key
@@ -1247,6 +1230,10 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+	_, ok := userlib.KeystoreGet(string(userlib.Hash([]byte(recipientUsername + "_user_verify"))))
+	if !ok {
+		return errors.New("recipient user does not exist")
+	}
 	// pull map struct
 	map_id := userdata.User_map_id
 	map_bytes, ok := userlib.DatastoreGet(map_id)
