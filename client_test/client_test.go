@@ -1193,7 +1193,7 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("Randomized attacks on Datastore", func() {
 		Specify("Testing Random Datastore Manipulation", func() {
-			for i := 0; i < 50; i++ {
+			for i := 0; i < 100; i++ {
 				alice, err = client.InitUser("alice", defaultPassword)
 				Expect(err).To(BeNil())
 
