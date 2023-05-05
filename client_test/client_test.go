@@ -1208,6 +1208,12 @@ var _ = Describe("Client Tests", func() {
 			err = testUser.StoreFile(testFilename, []byte("This is a test file."))
 			Expect(err).To(BeNil())
 
+			alice, err := client.InitUser("alice", "password")
+			Expect(err).To(BeNil())
+
+			inv_ptr, err := testUser.createInvitation(testFilename, "alice")
+			Expect(err).To(BeNil())
+
 			datastoreMap := userlib.DatastoreGetMap()
 			keys := make([]uuid.UUID, 0, len(datastoreMap))
 	
@@ -1238,6 +1244,17 @@ var _ = Describe("Client Tests", func() {
 				Expect(fileData).To(Equal([]byte("This is a test file.")))
 			} else {
 				Expect(fileData).ToNot(Equal([]byte("This is a test file.")))
+			}
+
+			err = alice.AcceptInvitation(testUsername, inv_ptr, "aliceFile")
+			if err == nil {
+				content, err := alice.LoadFile("aliceFile")
+				Expect(err).To(BeNil())
+				Expect(content).To(Equal([]byte("This is a test file.")))
+			} else {
+				content, err := alice.LoadFile("aliceFile")
+				Expect(err).ToNot(BeNil())
+				Expect(content).ToNot(Equal([]byte("This is a test file.")))
 			}
 		})
 	})
