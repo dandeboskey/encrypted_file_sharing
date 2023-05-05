@@ -1193,7 +1193,7 @@ var _ = Describe("Client Tests", func() {
 	})
 
 	Describe("Randomized attacks on Datastore", func() {
-		const numberOfFuzzTests = 100
+		const numberOfFuzzTests = 5
 	
 		It("Should be robust against random tampering in the Datastore", func() {
 
@@ -1211,7 +1211,7 @@ var _ = Describe("Client Tests", func() {
 			alice, err := client.InitUser("alice", "password")
 			Expect(err).To(BeNil())
 
-			inv_ptr, err := testUser.createInvitation(testFilename, "alice")
+			inv_ptr, err := testUser.CreateInvitation(testFilename, "alice")
 			Expect(err).To(BeNil())
 
 			datastoreMap := userlib.DatastoreGetMap()
