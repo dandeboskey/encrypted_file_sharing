@@ -7,7 +7,6 @@ import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
 	"github.com/google/uuid"
-	"time"
 	"math/rand"
 	_ "encoding/hex"
 	_ "errors"
@@ -1195,10 +1194,6 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("Randomized attacks on Datastore", func() {
 		const numberOfFuzzTests = 100
-
-		BeforeEach(func() {
-			rand.Seed(time.Now().UnixNano())
-		})
 	
 		It("Should be robust against random tampering in the Datastore", func() {
 
