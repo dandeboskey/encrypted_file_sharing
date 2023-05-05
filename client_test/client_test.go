@@ -7,6 +7,7 @@ import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
 	_ "encoding/hex"
+	"errors"
 	_ "errors"
 	"math/rand"
 	_ "strconv"
@@ -85,6 +86,37 @@ var _ = Describe("Client Tests", func() {
 	})
 
 	Describe("Basic Tests", func() {
+
+		Specify("Custom Test: Efficient File Append", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			// Helper function to measure bandwidth of a particular operation
+			measureBandwidth := func(probe func()) (bandwidth int) {
+				before := userlib.DatastoreGetBandwidth()
+				probe()
+				after := userlib.DatastoreGetBandwidth()
+				return after - before
+			}
+
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+			bw2 := measureBandwidth(func() {
+				err = alice.AppendToFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
+			bw3 := measureBandwidth(func() {
+				err = alice.AppendToFile(aliceFile, []byte(contentOne))
+				Expect(err).To(BeNil())
+			})
+			if bw2 == bw3 {
+				err = nil
+			} else {
+				err = errors.New("inefficient file append")
+			}
+			Expect(err).To(BeNil())
+		})
 
 		Specify("Basic Test: Testing InitUser/GetUser on a single user.", func() {
 			userlib.DebugMsg("Initializing user Alice.")
