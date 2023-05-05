@@ -1217,6 +1217,7 @@ var _ = Describe("Client Tests", func() {
 					datastoreKeys[i] = k
 					i++
 				}
+
 				randInt := rand.Intn(len(datastoreKeys))
 				userlib.DatastoreSet(datastoreKeys[randInt], []byte("data"))
 
@@ -1226,6 +1227,51 @@ var _ = Describe("Client Tests", func() {
 				err4 := bob.AcceptInvitation("alice", invite_uuid, aliceFile)
 
 				if err1 == nil && err2 == nil && err3 == nil && err4 == nil {
+					Expect("err").To(BeNil())
+				}
+
+				userlib.DatastoreClear()
+				userlib.KeystoreClear()
+			}
+		})
+
+		Specify("Testing Random Datastore Manipulation", func() {
+			for i := 0; i < 100; i++ {
+				alice, err = client.InitUser("alice", defaultPassword)
+				Expect(err).To(BeNil())
+
+				bob, err = client.InitUser("bob", defaultPassword)
+				Expect(err).To(BeNil())
+
+				err = alice.StoreFile(aliceFile, []byte("content"))
+				Expect(err).To(BeNil())
+
+				err = alice.AppendToFile(aliceFile, []byte("more content"))
+				Expect(err).To(BeNil())
+
+				invite_uuid, err := alice.CreateInvitation(aliceFile, "bob")
+				Expect(err).To(BeNil())
+
+				datastore := userlib.DatastoreGetMap()
+				datastoreKeys := make([]userlib.UUID, len(datastore))
+
+				i := 0
+				for k := range datastore {
+					datastoreKeys[i] = k
+					i++
+				}
+				
+				randInt := rand.Intn(len(datastoreKeys))
+				userlib.DatastoreSet(datastoreKeys[randInt], []byte("data"))
+
+				_, err1 := alice.LoadFile(aliceFile)
+				_, err2 := client.GetUser("alice", defaultPassword)
+				_, err3 := client.GetUser("bob", defaultPassword)
+				err4 := bob.AcceptInvitation("alice", invite_uuid, aliceFile)
+				err5 := bob.AppendToFile(aliceFile, []byte("more content"))
+				err6 := alice.RevokeAccess(aliceFile, "bob")
+
+				if err1 == nil && err2 == nil && err3 == nil && err4 == nil && err5 == nil && err6 == nil{
 					Expect("err").To(BeNil())
 				}
 
