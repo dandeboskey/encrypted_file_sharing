@@ -1222,7 +1222,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 	// store invitation data in user's maps
-	if _ , isMapContainsKey := user_maps.UserAccessPointMap[filename]; isMapContainsKey {
+	if _, isMapContainsKey := user_maps.UserAccessPointMap[filename]; isMapContainsKey {
 		//key exist
 		return errors.New("filename already exists in user space")
 	} 

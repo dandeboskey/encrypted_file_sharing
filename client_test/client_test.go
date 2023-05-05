@@ -6,6 +6,9 @@ package client_test
 import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
+	"github.com/google/uuid"
+	"time"
+	"math/rand"
 	_ "encoding/hex"
 	_ "errors"
 	_ "strconv"
@@ -1037,7 +1040,7 @@ var _ = Describe("Client Tests", func() {
 				})
 			})
 		})
-		
+
 		Describe("Accepting an invitation", func() {
 			It("Should accept a valid invitation", func() {
 				alice, _ := client.InitUser("alice", defaultPassword)
@@ -1187,6 +1190,60 @@ var _ = Describe("Client Tests", func() {
 			// Check if Bob can't CreateInvitation
 			_, err = bob.CreateInvitation("bobFile.txt", "charles")
 			Expect(err).NotTo(BeNil())
+		})
+	})
+
+	Describe("Randomized attacks on Datastore", func() {
+		const numberOfFuzzTests = 100
+
+		BeforeEach(func() {
+			rand.Seed(time.Now().UnixNano())
+		})
+	
+		It("Should be robust against random tampering in the Datastore", func() {
+
+			testUsername := "testUser"
+			testPassword := "testPassword"
+			testFilename := "testFile"
+
+			var err error
+			testUser, err := client.InitUser(testUsername, testPassword)
+			Expect(err).To(BeNil())
+
+			err = testUser.StoreFile(testFilename, []byte("This is a test file."))
+			Expect(err).To(BeNil())
+
+			datastoreMap := userlib.DatastoreGetMap()
+			keys := make([]uuid.UUID, 0, len(datastoreMap))
+	
+			for key := range datastoreMap {
+				keys = append(keys, key)
+			}
+	
+			for i := 0; i < numberOfFuzzTests; i++ {
+				// Randomly choose an index within the bounds of the Datastore map
+				randomIndex := rand.Intn(len(keys))
+	
+				// Randomly decide whether to delete or modify the entry with equal probability
+				operation := rand.Intn(2)
+	
+				if operation == 0 {
+					// Delete the entry
+					delete(datastoreMap, keys[randomIndex])
+				} else {
+					// Modify the entry with random data
+					randomData := make([]byte, rand.Intn(100)+1)
+					_, _ = rand.Read(randomData)
+					datastoreMap[keys[randomIndex]] = randomData
+				}
+			}
+	
+			fileData, err := testUser.LoadFile(testFilename)
+			if err == nil {
+				Expect(fileData).To(Equal([]byte("This is a test file.")))
+			} else {
+				Expect(fileData).ToNot(Equal([]byte("This is a test file.")))
+			}
 		})
 	})
 })
