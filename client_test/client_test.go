@@ -1200,8 +1200,7 @@ var _ = Describe("Client Tests", func() {
 				bob, err = client.InitUser("bob", defaultPassword)
 				Expect(err).To(BeNil())
 
-				const content = "content"
-				err = alice.StoreFile(aliceFile, []byte(content))
+				err = alice.StoreFile(aliceFile, []byte("content"))
 				Expect(err).To(BeNil())
 
 				err = alice.AppendToFile(aliceFile, []byte("more content"))
