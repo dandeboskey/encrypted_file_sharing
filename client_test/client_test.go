@@ -6,7 +6,6 @@ package client_test
 import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
-	"github.com/google/uuid"
 	"math/rand"
 	_ "encoding/hex"
 	_ "errors"
@@ -1193,68 +1192,47 @@ var _ = Describe("Client Tests", func() {
 	})
 
 	Describe("Randomized attacks on Datastore", func() {
-		const numberOfFuzzTests = 5
-	
-		It("Should be robust against random tampering in the Datastore", func() {
-
-			testUsername := "testUser"
-			testPassword := "testPassword"
-			testFilename := "testFile"
-
-			var err error
-			testUser, err := client.InitUser(testUsername, testPassword)
-			Expect(err).To(BeNil())
-
-			err = testUser.StoreFile(testFilename, []byte("This is a test file."))
-			Expect(err).To(BeNil())
-
-			alice, err := client.InitUser("alice", "password")
-			Expect(err).To(BeNil())
-
-			inv_ptr, err := testUser.CreateInvitation(testFilename, "alice")
-			Expect(err).To(BeNil())
-
-			datastoreMap := userlib.DatastoreGetMap()
-			keys := make([]uuid.UUID, 0, len(datastoreMap))
-	
-			for key := range datastoreMap {
-				keys = append(keys, key)
-			}
-	
-			for i := 0; i < numberOfFuzzTests; i++ {
-				// Randomly choose an index within the bounds of the Datastore map
-				randomIndex := rand.Intn(len(keys))
-	
-				// Randomly decide whether to delete or modify the entry with equal probability
-				operation := rand.Intn(2)
-	
-				if operation == 0 {
-					// Delete the entry
-					delete(datastoreMap, keys[randomIndex])
-				} else {
-					// Modify the entry with random data
-					randomData := make([]byte, rand.Intn(100)+1)
-					_, _ = rand.Read(randomData)
-					datastoreMap[keys[randomIndex]] = randomData
-				}
-			}
-	
-			fileData, err := testUser.LoadFile(testFilename)
-			if err == nil {
-				Expect(fileData).To(Equal([]byte("This is a test file.")))
-			} else {
-				Expect(fileData).ToNot(Equal([]byte("This is a test file.")))
-			}
-
-			err = alice.AcceptInvitation(testUsername, inv_ptr, "aliceFile")
-			if err == nil {
-				content, err := alice.LoadFile("aliceFile")
+		Specify("Testing Random Datastore Manipulation", func() {
+			for i := 0; i < 50; i++ {
+				alice, err = client.InitUser("alice", defaultPassword)
 				Expect(err).To(BeNil())
-				Expect(content).To(Equal([]byte("This is a test file.")))
-			} else {
-				content, err := alice.LoadFile("aliceFile")
-				Expect(err).ToNot(BeNil())
-				Expect(content).ToNot(Equal([]byte("This is a test file.")))
+
+				bob, err = client.InitUser("bob", defaultPassword)
+				Expect(err).To(BeNil())
+
+				const content = "content"
+				err = alice.StoreFile(aliceFile, []byte(content))
+				Expect(err).To(BeNil())
+
+				err = alice.AppendToFile(aliceFile, []byte("more data"))
+				Expect(err).To(BeNil())
+
+				invite_uuid, err := alice.CreateInvitation(aliceFile, "bob")
+				Expect(err).To(BeNil())
+
+				datastore := userlib.DatastoreGetMap()
+				datastoreKeys := make([]userlib.UUID, len(datastore))
+				i := 0
+				for k := range datastore {
+					datastoreKeys[i] = k
+					i++
+				}
+				randInt := rand.Intn(len(datastoreKeys))
+				userlib.DatastoreSet(datastoreKeys[randInt], []byte("malicious data"))
+
+				userlib.DebugMsg("Checking that some function errors...")
+				_, err1 := alice.LoadFile(aliceFile)
+				_, err2 := client.GetUser("alice", defaultPassword)
+				_, err3 := client.GetUser("bob", defaultPassword)
+				err4 := bob.AcceptInvitation("alice", invite_uuid, aliceFile)
+
+				// If they are all nil then error
+				if err1 == nil && err2 == nil && err3 == nil && err4 == nil {
+					Expect("err").To(BeNil())
+				}
+
+				userlib.DatastoreClear()
+				userlib.KeystoreClear()
 			}
 		})
 	})
