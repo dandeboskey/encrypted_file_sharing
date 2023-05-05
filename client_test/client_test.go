@@ -359,6 +359,15 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
+		Specify("Custom Test: nonexistent file load", func() {
+			userlib.DebugMsg("Initializing user")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			userlib.DebugMsg("File Load")
+			_, err := alice.LoadFile("file")
+			Expect(err).ToNot(BeNil())
+		})
+
 		Specify("Custom Test: Testing Empty Usernames", func() {
 			userlib.DebugMsg("Initializing user")
 			alice, err = client.InitUser("", defaultPassword)
