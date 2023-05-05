@@ -1204,7 +1204,7 @@ var _ = Describe("Client Tests", func() {
 				err = alice.StoreFile(aliceFile, []byte(content))
 				Expect(err).To(BeNil())
 
-				err = alice.AppendToFile(aliceFile, []byte("more data"))
+				err = alice.AppendToFile(aliceFile, []byte("more content"))
 				Expect(err).To(BeNil())
 
 				invite_uuid, err := alice.CreateInvitation(aliceFile, "bob")
@@ -1212,21 +1212,20 @@ var _ = Describe("Client Tests", func() {
 
 				datastore := userlib.DatastoreGetMap()
 				datastoreKeys := make([]userlib.UUID, len(datastore))
+
 				i := 0
 				for k := range datastore {
 					datastoreKeys[i] = k
 					i++
 				}
 				randInt := rand.Intn(len(datastoreKeys))
-				userlib.DatastoreSet(datastoreKeys[randInt], []byte("malicious data"))
+				userlib.DatastoreSet(datastoreKeys[randInt], []byte("data"))
 
-				userlib.DebugMsg("Checking that some function errors...")
 				_, err1 := alice.LoadFile(aliceFile)
 				_, err2 := client.GetUser("alice", defaultPassword)
 				_, err3 := client.GetUser("bob", defaultPassword)
 				err4 := bob.AcceptInvitation("alice", invite_uuid, aliceFile)
 
-				// If they are all nil then error
 				if err1 == nil && err2 == nil && err3 == nil && err4 == nil {
 					Expect("err").To(BeNil())
 				}
