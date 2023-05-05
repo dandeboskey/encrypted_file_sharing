@@ -244,6 +244,34 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).ToNot(BeNil())
 		})
 
+		Specify("Custom Test: Independent Namespaces", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Initializing user Bob.")
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentTwo)
+			err = bob.StoreFile(aliceFile, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data1, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data1).To(Equal([]byte(contentOne)))
+
+			userlib.DebugMsg("Loading file...")
+			data2, err := bob.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data2).To(Equal([]byte(contentTwo)))
+		})
+
 		Specify("Custom Test: Empty Filename", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
