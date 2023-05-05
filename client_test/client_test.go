@@ -6,9 +6,9 @@ package client_test
 import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
-	"math/rand"
 	_ "encoding/hex"
 	_ "errors"
+	"math/rand"
 	_ "strconv"
 	_ "strings"
 	"testing"
@@ -242,6 +242,29 @@ var _ = Describe("Client Tests", func() {
 
 			err = charles.AppendToFile(charlesFile, []byte(contentTwo))
 			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("Custom Test: Empty Filename", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(emptyString, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", contentTwo)
+			err = alice.AppendToFile(emptyString, []byte(contentTwo))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", contentThree)
+			err = alice.AppendToFile(emptyString, []byte(contentThree))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(emptyString)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne + contentTwo + contentThree)))
 		})
 
 		Specify("Custom Test: Case Sensitive Users", func() {
@@ -840,7 +863,7 @@ var _ = Describe("Client Tests", func() {
 			err = alice.RevokeAccess(aliceFile, "bob")
 			Expect(err).ToNot(BeNil())
 		})
-		
+
 		Specify("Shared and accepted then revoked then revoked", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -957,7 +980,23 @@ var _ = Describe("Client Tests", func() {
 			Expect(content).To(Equal([]byte(contentOne + contentTwo)))
 		})
 
-		Specify("Custom Test: ", func() {
+		Specify("Custom Test: appending empty content", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending nothing")
+			err = alice.AppendToFile(aliceFile, []byte(emptyString))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
 
 		})
 	})
@@ -967,7 +1006,7 @@ var _ = Describe("Client Tests", func() {
 			aliceFile = "aliceFile.txt"
 			bobFile   = "bobFile.txt"
 		)
-	
+
 		BeforeEach(func() {
 			userlib.DatastoreClear()
 			userlib.KeystoreClear()
@@ -978,69 +1017,69 @@ var _ = Describe("Client Tests", func() {
 				aliceFile = "aliceFile.txt"
 				bobFile   = "bobFile.txt"
 			)
-		
+
 			BeforeEach(func() {
 				userlib.DatastoreClear()
 				userlib.KeystoreClear()
 			})
-		
+
 			Describe("Appending to a file", func() {
 				It("Should append content to an existing file", func() {
 					alice, _ := client.InitUser("alice", defaultPassword)
 					alice.StoreFile(aliceFile, []byte(contentOne))
-		
+
 					// Alice appends content to her file
 					err := alice.AppendToFile(aliceFile, []byte(contentTwo))
 					Expect(err).To(BeNil())
-		
+
 					// Check if the content is appended correctly
 					content, err := alice.LoadFile(aliceFile)
 					Expect(err).To(BeNil())
 					Expect(content).To(Equal([]byte(contentOne + contentTwo)))
 				})
-		
+
 				It("Should fail if the file does not exist in the caller's namespace", func() {
 					alice, _ := client.InitUser("alice", defaultPassword)
-		
+
 					// Alice tries to append to a nonexistent file
 					err := alice.AppendToFile(aliceFile, []byte(contentTwo))
 					Expect(err).NotTo(BeNil())
 				})
-		
+
 				It("Should append empty content to an existing file", func() {
 					alice, _ := client.InitUser("alice", defaultPassword)
 					alice.StoreFile(aliceFile, []byte(contentOne))
-		
+
 					// Alice appends empty content to her file
 					err := alice.AppendToFile(aliceFile, []byte{})
 					Expect(err).To(BeNil())
-		
+
 					// Check if the content is unchanged
 					content, err := alice.LoadFile(aliceFile)
 					Expect(err).To(BeNil())
 					Expect(content).To(Equal([]byte(contentOne)))
 				})
-		
+
 				It("Should allow appending to a shared file", func() {
 					alice, _ := client.InitUser("alice", defaultPassword)
 					bob, _ := client.InitUser("bob", defaultPassword)
 					alice.StoreFile(aliceFile, []byte(contentOne))
-		
+
 					// Alice shares the file with Bob
 					invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
 					Expect(err).To(BeNil())
 					err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
 					Expect(err).To(BeNil())
-		
+
 					// Bob appends content to the shared file
 					err = bob.AppendToFile(bobFile, []byte(contentTwo))
 					Expect(err).To(BeNil())
-		
+
 					// Check if the content is appended correctly for both Alice and Bob
 					aliceContent, err := alice.LoadFile(aliceFile)
 					Expect(err).To(BeNil())
 					Expect(aliceContent).To(Equal([]byte(contentOne + contentTwo)))
-		
+
 					bobContent, err := bob.LoadFile(bobFile)
 					Expect(err).To(BeNil())
 					Expect(bobContent).To(Equal([]byte(contentOne + contentTwo)))
@@ -1053,31 +1092,31 @@ var _ = Describe("Client Tests", func() {
 				alice, _ := client.InitUser("alice", defaultPassword)
 				bob, _ := client.InitUser("bob", defaultPassword)
 				alice.StoreFile(aliceFile, []byte(contentOne))
-	
+
 				// Alice creates and shares an invitation with Bob
 				invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
 				Expect(err).To(BeNil())
-	
+
 				// Bob accepts the invitation and assigns the shared file a name in his personal namespace
 				err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
 				Expect(err).To(BeNil())
-	
+
 				// Check if Bob can LoadFile after accepting the invitation
 				content, err := bob.LoadFile(bobFile)
 				Expect(err).To(BeNil())
 				Expect(content).To(Equal([]byte(contentOne)))
 			})
-	
+
 			It("Should fail if the filename is already taken in the recipient's namespace", func() {
 				alice, _ := client.InitUser("alice", defaultPassword)
 				bob, _ := client.InitUser("bob", defaultPassword)
 				alice.StoreFile(aliceFile, []byte(contentOne))
 				bob.StoreFile(bobFile, []byte(contentTwo))
-	
+
 				// Alice creates and shares an invitation with Bob
 				invitationPtr, err := alice.CreateInvitation(aliceFile, "bob")
 				Expect(err).To(BeNil())
-	
+
 				// Bob tries to accept the invitation with a filename that already exists in his namespace
 				err = bob.AcceptInvitation("alice", invitationPtr, bobFile)
 				Expect(err).NotTo(BeNil())
@@ -1087,113 +1126,113 @@ var _ = Describe("Client Tests", func() {
 
 	Describe("RevokeAccess Tests", func() {
 		const fileName = "sharedFile.txt"
-	
+
 		Specify("Nonexistent File", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			_, err = client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).NotTo(BeNil())
 		})
-	
+
 		Specify("Nonexistent Recipient", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			err = alice.StoreFile(fileName, []byte(contentOne))
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).NotTo(BeNil())
 		})
-	
+
 		Specify("Never shared with Recipient", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			_, err = client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			err = alice.StoreFile(fileName, []byte(contentOne))
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).NotTo(BeNil())
 		})
-	
+
 		Specify("Shared then revoked then revoked (invite never accepted)", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			_, err = client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			err = alice.StoreFile(fileName, []byte(contentOne))
 			Expect(err).To(BeNil())
-	
+
 			_, err = alice.CreateInvitation(fileName, "bob")
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).ToNot(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).ToNot(BeNil())
 		})
-	
+
 		Specify("Shared and accepted then revoked then revoked", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			bob, err := client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			err = alice.StoreFile(fileName, []byte(contentOne))
 			Expect(err).To(BeNil())
-	
+
 			invitationPtr, err := alice.CreateInvitation(fileName, "bob")
 			Expect(err).To(BeNil())
-	
+
 			err = bob.AcceptInvitation(alice.Username, invitationPtr, "bobFile.txt")
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).ToNot(BeNil())
 		})
-	
+
 		Specify("Perms Revoked Properly", func() {
 			alice, err := client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			bob, err := client.InitUser("bob", defaultPassword)
 			Expect(err).To(BeNil())
-	
+
 			err = alice.StoreFile(fileName, []byte(contentOne))
 			Expect(err).To(BeNil())
-	
-			invitationPtr, err := alice.CreateInvitation(fileName,"bob")
+
+			invitationPtr, err := alice.CreateInvitation(fileName, "bob")
 			Expect(err).To(BeNil())
-	
+
 			err = bob.AcceptInvitation(alice.Username, invitationPtr, "bobFile.txt")
 			Expect(err).To(BeNil())
-	
+
 			err = alice.RevokeAccess(fileName, "bob")
 			Expect(err).To(BeNil())
-	
+
 			// Check if Bob can't LoadFile
 			_, err = bob.LoadFile("bobFile.txt")
 			Expect(err).NotTo(BeNil())
-	
+
 			// Check if Bob can't AppendToFile
 			err = bob.AppendToFile("bobFile.txt", []byte(contentTwo))
 			Expect(err).NotTo(BeNil())
-	
+
 			// Check if Bob can't CreateInvitation
 			_, err = bob.CreateInvitation("bobFile.txt", "charles")
 			Expect(err).NotTo(BeNil())
@@ -1269,7 +1308,7 @@ var _ = Describe("Client Tests", func() {
 					datastoreKeys[i] = k
 					i++
 				}
-				
+
 				randInt := rand.Intn(len(datastoreKeys))
 				userlib.DatastoreSet(datastoreKeys[randInt], []byte("data"))
 
@@ -1280,7 +1319,7 @@ var _ = Describe("Client Tests", func() {
 				err5 := bob.AppendToFile(aliceFile, []byte("more content"))
 				err6 := alice.RevokeAccess(aliceFile, "bob")
 
-				if err1 == nil && err2 == nil && err3 == nil && err4 == nil && err5 == nil && err6 == nil{
+				if err1 == nil && err2 == nil && err3 == nil && err4 == nil && err5 == nil && err6 == nil {
 					Expect("err").To(BeNil())
 				}
 
